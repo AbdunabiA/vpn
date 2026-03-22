@@ -1,0 +1,166 @@
+import React, {useEffect, useState} from 'react';
+import {View, Text, StyleSheet, SafeAreaView, TouchableOpacity} from 'react-native';
+import {useTranslation} from 'react-i18next';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+
+import {ConnectButton} from '../components/ConnectButton';
+import {SpeedIndicator} from '../components/SpeedIndicator';
+import {StatusBadge} from '../components/StatusBadge';
+import {useVpnConnection} from '../hooks/useVpnConnection';
+import {useServerStore} from '../stores/serverStore';
+import {colors, typography, spacing} from '../theme';
+import type {RootStackParamList} from '../navigation/RootNavigator';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+export function HomeScreen() {
+  const {t} = useTranslation();
+  const navigation = useNavigation<NavigationProp>();
+  const {
+    connectionState,
+    currentServer,
+    connectedAt,
+    bytesUp,
+    bytesDown,
+    speedUp,
+    speedDown,
+    toggle,
+  } = useVpnConnection();
+  const {selectedServer} = useServerStore();
+
+  // Connection timer
+  const [elapsed, setElapsed] = useState('00:00:00');
+
+  useEffect(() => {
+    if (connectionState !== 'connected' || !connectedAt) {
+      setElapsed('00:00:00');
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const diff = Math.floor((Date.now() - connectedAt.getTime()) / 1000);
+      const hrs = Math.floor(diff / 3600).toString().padStart(2, '0');
+      const mins = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+      const secs = (diff % 60).toString().padStart(2, '0');
+      setElapsed(`${hrs}:${mins}:${secs}`);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [connectionState, connectedAt]);
+
+  const serverDisplay = selectedServer || currentServer;
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.content}>
+        {/* Status */}
+        <View style={styles.statusSection}>
+          <StatusBadge state={connectionState} />
+          {connectionState === 'connected' && (
+            <Text style={styles.timer}>{elapsed}</Text>
+          )}
+          {connectionState === 'disconnected' && (
+            <Text style={styles.hint}>{t('connection.tapToConnect')}</Text>
+          )}
+        </View>
+
+        {/* Connect Button */}
+        <View style={styles.buttonSection}>
+          <ConnectButton state={connectionState} onPress={toggle} />
+        </View>
+
+        {/* Speed Stats (visible when connected) */}
+        {connectionState === 'connected' && (
+          <SpeedIndicator
+            speedUp={speedUp}
+            speedDown={speedDown}
+            bytesUp={bytesUp}
+            bytesDown={bytesDown}
+          />
+        )}
+
+        {/* Server Selection */}
+        <TouchableOpacity
+          style={styles.serverSelector}
+          onPress={() => navigation.navigate('ServerList')}
+          activeOpacity={0.7}>
+          {serverDisplay ? (
+            <View style={styles.serverInfo}>
+              <Text style={styles.serverCity}>{serverDisplay.city}</Text>
+              <Text style={styles.serverCountry}>{serverDisplay.country}</Text>
+            </View>
+          ) : (
+            <Text style={styles.selectServerText}>
+              {t('connection.selectServer')}
+            </Text>
+          )}
+          <Text style={styles.chevron}>›</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  statusSection: {
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  timer: {
+    ...typography.h2,
+    color: colors.textPrimary,
+    marginTop: spacing.sm,
+    fontVariant: ['tabular-nums'],
+  },
+  hint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
+  buttonSection: {
+    marginVertical: spacing.xl,
+  },
+  serverSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginTop: spacing.xl,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  serverInfo: {
+    flex: 1,
+  },
+  serverCity: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+  },
+  serverCountry: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  selectServerText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  chevron: {
+    fontSize: 24,
+    color: colors.textMuted,
+  },
+});

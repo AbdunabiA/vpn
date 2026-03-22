@@ -1,0 +1,58 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "loading": "Loading...",
+    "retry": "Retry",
+    "error": "Error"
+  },
+  "connection": {
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "connecting": "Connecting...",
+    "disconnecting": "Disconnecting...",
+    "connected": "Connected",
+    "disconnected": "Not Connected",
+    "reconnecting": "Reconnecting...",
+    "tapToConnect": "Tap to secure your connection",
+    "protectedSince": "Protected since {{time}}",
+    "selectServer": "Select Server"
+  },
+  "servers": {
+    "title": "Servers",
+    "fastest": "Fastest Server",
+    "favorites": "Favorites",
+    "allServers": "All Servers",
+    "load": "{{percent}}% load",
+    "ping": "{{ms}}ms"
+  },
+  "settings": {
+    "title": "Settings",
+    "protocol": "Protocol",
+    "protocolAuto": "Auto (Recommended)",
+    "killSwitch": "Kill Switch",
+    "killSwitchDesc": "Block internet if VPN disconnects",
+    "splitTunneling": "Split Tunneling",
+    "dns": "DNS Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "darkTheme": "Dark",
+    "lightTheme": "Light",
+    "systemTheme": "System"
+  },
+  "account": {
+    "title": "Account",
+    "login": "Log In",
+    "register": "Sign Up",
+    "logout": "Log Out",
+    "email": "Email",
+    "password": "Password",
+    "subscription": "Subscription",
+    "freePlan": "Free",
+    "premiumPlan": "Premium",
+    "upgradeToPremium": "Upgrade to Premium",
+    "devices": "Devices",
+    "expiresOn": "Expires {{date}}"
+  }
+}

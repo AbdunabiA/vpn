@@ -1,0 +1,204 @@
+package internal
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+
+	// XRay-core — import only what VLESS+REALITY needs
+	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/infra/conf/serial"
+	_ "github.com/xtls/xray-core/app/dispatcher"
+	_ "github.com/xtls/xray-core/app/proxyman/inbound"
+	_ "github.com/xtls/xray-core/app/proxyman/outbound"
+	_ "github.com/xtls/xray-core/proxy/freedom"
+	_ "github.com/xtls/xray-core/proxy/blackhole"
+	_ "github.com/xtls/xray-core/proxy/vless/inbound"
+	_ "github.com/xtls/xray-core/transport/internet/reality"
+	_ "github.com/xtls/xray-core/transport/internet/tcp"
+
+	"go.uber.org/zap"
+)
+
+// TunnelServer manages the VPN tunnel lifecycle.
+// It wraps XRay-core for VLESS+REALITY and exposes a health check endpoint.
+type TunnelServer struct {
+	config       *Config
+	logger       *zap.Logger
+	xrayInstance *core.Instance
+	healthServer *http.Server
+	mu           sync.Mutex
+	running      bool
+}
+
+// NewTunnelServer creates a new tunnel server instance.
+func NewTunnelServer(config *Config, logger *zap.Logger) (*TunnelServer, error) {
+	return &TunnelServer{
+		config: config,
+		logger: logger,
+	}, nil
+}
+
+// Start initializes and starts the VLESS+REALITY tunnel via XRay-core.
+//
+// This creates an XRay-core instance that:
+// 1. Listens on port 443 (looks like a normal HTTPS server)
+// 2. Uses REALITY to impersonate a legitimate TLS server
+// 3. Accepts only clients with the correct REALITY key
+// 4. Forwards authenticated client traffic to the internet
+func (s *TunnelServer) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.running {
+		return fmt.Errorf("server is already running")
+	}
+
+	// Build XRay-core JSON configuration
+	xrayConfig := s.buildXRayConfig()
+
+	s.logger.Info("starting xray-core",
+		zap.String("protocol", s.config.Protocol),
+		zap.String("dest", s.config.Reality.Dest),
+		zap.Strings("server_names", s.config.Reality.ServerNames),
+		zap.Int("port", s.config.Port),
+	)
+
+	// Serialize config to JSON
+	jsonConfig, err := json.Marshal(xrayConfig)
+	if err != nil {
+		return fmt.Errorf("marshaling xray config: %w", err)
+	}
+
+	// Parse JSON config into xray-core protobuf config
+	xrayPbConfig, err := serial.LoadJSONConfig(bytes.NewReader(jsonConfig))
+	if err != nil {
+		return fmt.Errorf("loading xray config: %w", err)
+	}
+
+	// Create XRay-core instance from protobuf config
+	instance, err := core.New(xrayPbConfig)
+	if err != nil {
+		return fmt.Errorf("creating xray instance: %w", err)
+	}
+
+	// Start the tunnel
+	if err := instance.Start(); err != nil {
+		return fmt.Errorf("starting xray instance: %w", err)
+	}
+
+	s.xrayInstance = instance
+	s.logger.Info("xray-core started — VLESS+REALITY tunnel active",
+		zap.Int("port", s.config.Port),
+	)
+
+	// Start health check server
+	s.startHealthServer()
+
+	s.running = true
+	return nil
+}
+
+// Stop gracefully shuts down the tunnel server.
+func (s *TunnelServer) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.running {
+		return nil
+	}
+
+	if s.xrayInstance != nil {
+		if err := s.xrayInstance.Close(); err != nil {
+			s.logger.Error("error closing xray instance", zap.Error(err))
+		}
+		s.xrayInstance = nil
+	}
+
+	if s.healthServer != nil {
+		s.healthServer.Close()
+	}
+
+	s.running = false
+	s.logger.Info("tunnel server stopped")
+	return nil
+}
+
+// buildXRayConfig creates the XRay-core JSON configuration for VLESS+REALITY.
+// This configuration makes the server appear as a legitimate HTTPS server
+// to any network observer or DPI system.
+func (s *TunnelServer) buildXRayConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"log": map[string]interface{}{
+			"loglevel": "warning",
+		},
+		"inbounds": []map[string]interface{}{
+			{
+				"port":     s.config.Port,
+				"protocol": "vless",
+				"settings": map[string]interface{}{
+					"clients": []map[string]interface{}{
+						{
+							// Accept any UUID — in production, validate against API
+							"id":   "00000000-0000-0000-0000-000000000000",
+							"flow": "xtls-rprx-vision",
+						},
+					},
+					"decryption": "none",
+				},
+				"streamSettings": map[string]interface{}{
+					"network":  "tcp",
+					"security": "reality",
+					"realitySettings": map[string]interface{}{
+						"show":        false,
+						"dest":        s.config.Reality.Dest,
+						"xver":        0,
+						"serverNames": s.config.Reality.ServerNames,
+						"privateKey":  s.config.Reality.PrivateKey,
+						"shortIds":    s.config.Reality.ShortIDs,
+					},
+				},
+			},
+		},
+		"outbounds": []map[string]interface{}{
+			{
+				"protocol": "freedom",
+				"tag":      "direct",
+			},
+			{
+				"protocol": "blackhole",
+				"tag":      "block",
+			},
+		},
+	}
+}
+
+// startHealthServer runs an HTTP server for health checks and metrics.
+func (s *TunnelServer) startHealthServer() {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "healthy",
+			"protocol": s.config.Protocol,
+			"running":  s.running,
+			"xray":     s.xrayInstance != nil,
+		})
+	})
+
+	s.healthServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", s.config.HealthPort),
+		Handler: mux,
+	}
+
+	go func() {
+		if err := s.healthServer.ListenAndServe(); err != http.ErrServerClosed {
+			s.logger.Error("health server error", zap.Error(err))
+		}
+	}()
+
+	s.logger.Info("health server started", zap.Int("port", s.config.HealthPort))
+}
