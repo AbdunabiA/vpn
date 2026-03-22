@@ -1,0 +1,12 @@
+{
+  "port": 443,
+  "protocol": "vless-reality",
+  "reality": {
+    "private_key": "skdzW5MPSEOtk2yk4T3le-zIDcQEhb5hsPu5U-dpVKo",
+    "public_key": "OAmaJn5JqNlYdNIulgafHAwZs8MLLuU8MXs9rt26sl0",
+    "short_ids": ["abcd1234", "ef567890"],
+    "dest": "www.microsoft.com:443",
+    "server_names": ["www.microsoft.com", "microsoft.com"]
+  },
+  "health_port": 8080
+}

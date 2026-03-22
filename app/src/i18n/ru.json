@@ -1,0 +1,58 @@
+{
+  "common": {
+    "cancel": "Отмена",
+    "confirm": "Подтвердить",
+    "save": "Сохранить",
+    "loading": "Загрузка...",
+    "retry": "Повторить",
+    "error": "Ошибка"
+  },
+  "connection": {
+    "connect": "Подключить",
+    "disconnect": "Отключить",
+    "connecting": "Подключение...",
+    "disconnecting": "Отключение...",
+    "connected": "Подключено",
+    "disconnected": "Не подключено",
+    "reconnecting": "Переподключение...",
+    "tapToConnect": "Нажмите для защиты соединения",
+    "protectedSince": "Защищено с {{time}}",
+    "selectServer": "Выбрать сервер"
+  },
+  "servers": {
+    "title": "Серверы",
+    "fastest": "Быстрый сервер",
+    "favorites": "Избранные",
+    "allServers": "Все серверы",
+    "load": "{{percent}}% нагрузка",
+    "ping": "{{ms}}мс"
+  },
+  "settings": {
+    "title": "Настройки",
+    "protocol": "Протокол",
+    "protocolAuto": "Авто (Рекомендуется)",
+    "killSwitch": "Kill Switch",
+    "killSwitchDesc": "Блокировать интернет при отключении VPN",
+    "splitTunneling": "Раздельное туннелирование",
+    "dns": "Настройки DNS",
+    "language": "Язык",
+    "theme": "Тема",
+    "darkTheme": "Тёмная",
+    "lightTheme": "Светлая",
+    "systemTheme": "Системная"
+  },
+  "account": {
+    "title": "Аккаунт",
+    "login": "Войти",
+    "register": "Регистрация",
+    "logout": "Выйти",
+    "email": "Email",
+    "password": "Пароль",
+    "subscription": "Подписка",
+    "freePlan": "Бесплатный",
+    "premiumPlan": "Премиум",
+    "upgradeToPremium": "Перейти на Премиум",
+    "devices": "Устройства",
+    "expiresOn": "Действует до {{date}}"
+  }
+}

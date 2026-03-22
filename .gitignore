@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+*.aar
+*.xcframework
+*.apk
+*.ipa
+*.app
+/build/
+/dist/
+/app/android/app/build/
+/app/ios/build/
+/app/ios/Pods/
+
+# Go
+/server/tunnel/cmd/tunnel-server
+/server/api/cmd/api-server
+/server/infra/cmd/infra-orchestrator
+
+# React Native
+app/.expo/
+app/ios/DerivedData/
+*.hmap
+*.jsbundle
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+private_key*
+*.p12
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+*.out

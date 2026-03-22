@@ -1,0 +1,74 @@
+# Full backend development environment
+# Run: docker-compose up -d
+# Starts: PostgreSQL, Redis, API server, Tunnel server
+
+services:
+  # --- Databases ---
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vpn-postgres
+    environment:
+      POSTGRES_DB: vpnapp
+      POSTGRES_USER: vpnapp
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../server/api/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpnapp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: vpn-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Go Backend Services ---
+
+  api:
+    build:
+      context: ../../server/api
+      dockerfile: Dockerfile
+    container_name: vpn-api
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://vpnapp:devpassword@postgres:5432/vpnapp?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-in-production
+      STRIPE_KEY: sk_test_placeholder
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tunnel:
+    build:
+      context: ../../server/tunnel
+      dockerfile: Dockerfile
+    container_name: vpn-tunnel
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ../../server/tunnel/config.example.json:/app/config.json:ro
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+volumes:
+  pgdata:
