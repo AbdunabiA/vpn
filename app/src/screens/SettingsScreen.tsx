@@ -9,9 +9,12 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useSettingsStore} from '../stores/settingsStore';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {VpnProtocol} from '../types/vpn';
+import type {RootStackParamList} from '../navigation/RootNavigator';
 
 function SettingRow({
   label,
@@ -33,6 +36,31 @@ function SettingRow({
   );
 }
 
+function NavRow({
+  label,
+  description,
+  onPress,
+  badge,
+}: {
+  label: string;
+  description?: string;
+  onPress: () => void;
+  badge?: string;
+}) {
+  return (
+    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7}>
+      <View style={styles.rowLeft}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        {description && <Text style={styles.rowDesc}>{description}</Text>}
+      </View>
+      <View style={styles.navRight}>
+        {badge ? <Text style={styles.navBadge}>{badge}</Text> : null}
+        <Text style={styles.navChevron}>›</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 const PROTOCOLS: {value: VpnProtocol; label: string}[] = [
   {value: 'auto', label: 'Auto'},
   {value: 'vless-reality', label: 'VLESS+REALITY'},
@@ -42,18 +70,26 @@ const PROTOCOLS: {value: VpnProtocol; label: string}[] = [
 
 export function SettingsScreen() {
   const {t} = useTranslation();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
     protocol,
     killSwitch,
-    splitTunneling,
     dnsOverHttps,
     autoReconnect,
+    excludedApps,
+    excludedDomains,
     setProtocol,
     setKillSwitch,
-    setSplitTunneling,
     setDnsOverHttps,
     setAutoReconnect,
   } = useSettingsStore();
+
+  // Badge shows count of excluded items so the user knows the feature is active
+  const splitBadge = (() => {
+    const count = excludedApps.length + excludedDomains.length;
+    return count > 0 ? String(count) : undefined;
+  })();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -97,16 +133,11 @@ export function SettingsScreen() {
             }
           />
           <View style={styles.separator} />
-          <SettingRow
+          <NavRow
             label={t('settings.splitTunneling')}
-            right={
-              <Switch
-                value={splitTunneling}
-                onValueChange={setSplitTunneling}
-                trackColor={{true: colors.primary, false: colors.surfaceLight}}
-                thumbColor={colors.textPrimary}
-              />
-            }
+            description={t('splitTunnel.description')}
+            onPress={() => navigation.navigate('SplitTunnel')}
+            badge={splitBadge}
           />
           <View style={styles.separator} />
           <SettingRow
@@ -212,5 +243,24 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 18,
     fontWeight: '700',
+  },
+  navRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  navBadge: {
+    ...typography.captionBold,
+    color: colors.primary,
+    backgroundColor: colors.primary + '20',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+    overflow: 'hidden',
+  },
+  navChevron: {
+    fontSize: 22,
+    color: colors.textMuted,
+    lineHeight: 24,
   },
 });

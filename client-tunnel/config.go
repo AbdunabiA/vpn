@@ -141,14 +141,32 @@ func buildClientXRayConfig(config ConnectConfig) map[string]interface{} {
 			},
 		},
 		"routing": map[string]interface{}{
-			"rules": []map[string]interface{}{
-				{
-					// Route all traffic through the VPN
-					"type":        "field",
-					"inboundTag":  []string{"socks-in"},
-					"outboundTag": "vless-out",
-				},
-			},
+			"rules": buildRoutingRules(config),
 		},
 	}
+}
+
+// buildRoutingRules returns the XRay routing rules for the given config.
+// If ExcludedDomains is non-empty a direct-bypass rule is prepended before the
+// catch-all vless-out rule so that those domains never enter the VPN tunnel.
+func buildRoutingRules(config ConnectConfig) []map[string]interface{} {
+	rules := []map[string]interface{}{}
+
+	// Per-domain split tunnel bypass — must come BEFORE the catch-all rule.
+	if len(config.ExcludedDomains) > 0 {
+		rules = append(rules, map[string]interface{}{
+			"type":        "field",
+			"domain":      config.ExcludedDomains,
+			"outboundTag": "direct",
+		})
+	}
+
+	// Catch-all: route every inbound packet through the VPN.
+	rules = append(rules, map[string]interface{}{
+		"type":        "field",
+		"inboundTag":  []string{"socks-in"},
+		"outboundTag": "vless-out",
+	})
+
+	return rules
 }

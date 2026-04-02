@@ -47,11 +47,15 @@ const (
 
 // ConnectConfig is the configuration passed from the mobile app to establish a tunnel.
 type ConnectConfig struct {
-	ServerAddress string               `json:"server_address"`
-	ServerPort    int                  `json:"server_port"`
-	Protocol      string               `json:"protocol"`
-	UserID        string               `json:"user_id"`
-	Reality       *RealityClientConfig `json:"reality,omitempty"`
+	ServerAddress   string               `json:"server_address"`
+	ServerPort      int                  `json:"server_port"`
+	Protocol        string               `json:"protocol"`
+	UserID          string               `json:"user_id"`
+	Reality         *RealityClientConfig `json:"reality,omitempty"`
+	// ExcludedDomains lists domains that should bypass the VPN and go direct.
+	// Used on iOS for domain-based split tunneling (Android uses per-app exclusion
+	// via VpnService.Builder.addDisallowedApplication instead).
+	ExcludedDomains []string `json:"excluded_domains,omitempty"`
 }
 
 // RealityClientConfig holds client-side REALITY settings.

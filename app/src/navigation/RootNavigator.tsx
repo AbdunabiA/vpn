@@ -10,6 +10,7 @@ import {ServerListScreen} from '../screens/ServerListScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {AccountScreen} from '../screens/AccountScreen';
 import {PaymentScreen} from '../screens/PaymentScreen';
+import {SplitTunnelScreen} from '../screens/SplitTunnelScreen';
 import {colors, typography, spacing} from '../theme';
 
 export type RootStackParamList = {
@@ -18,6 +19,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Account: undefined;
   Payment: undefined;
+  SplitTunnel: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -75,6 +77,11 @@ export function RootNavigator() {
         name="Payment"
         component={PaymentScreen}
         options={{title: t('payment.title')}}
+      />
+      <Stack.Screen
+        name="SplitTunnel"
+        component={SplitTunnelScreen}
+        options={{title: t('splitTunnel.title')}}
       />
     </Stack.Navigator>
   );

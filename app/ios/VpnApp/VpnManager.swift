@@ -9,12 +9,23 @@ import NetworkExtension
 ///   React Native -> VpnModule.m -> VpnManager -> NETunnelProviderManager
 ///     -> PacketTunnelProvider (separate process) -> Go tunnel (xray-core)
 ///
+/// Kill switch:
+///   Uses Apple's built-in includeAllNetworks API (iOS 14+). When enabled,
+///   iOS routes ALL device traffic through the VPN at the OS level. If the
+///   tunnel drops, iOS blocks all traffic until it reconnects — no app-level
+///   logic required. excludeLocalNetworks is also set so AirDrop / mDNS still
+///   work on the local network.
+///
 class VpnManager: NSObject {
 
     static let shared = VpnManager()
 
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
+
+    private let sharedDefaults = UserDefaults(suiteName: "group.com.vpnapp.shared")
+    private let killSwitchKey = "kill_switch_enabled"
+    private let excludedDomainsKey = "excluded_domains_json"
 
     // Callback to notify React Native of status changes
     var onStatusChanged: ((String) -> Void)?
@@ -62,7 +73,15 @@ class VpnManager: NSObject {
                 }
 
                 do {
-                    let options = ["config": configJSON as NSObject]
+                    var options: [String: NSObject] = ["config": configJSON as NSObject]
+
+                    // Pass excluded domains to the Network Extension so it can
+                    // inject direct routing rules into the xray config.
+                    if let domainsJson = self.sharedDefaults?.string(forKey: self.excludedDomainsKey),
+                       !domainsJson.isEmpty, domainsJson != "[]" {
+                        options["excluded_domains"] = domainsJson as NSObject
+                    }
+
                     try manager.connection.startVPNTunnel(options: options)
                     completion(nil)
                 } catch {
@@ -118,6 +137,43 @@ class VpnManager: NSObject {
         }
     }
 
+    // MARK: - Kill Switch
+
+    /// Enable or disable the OS-level kill switch.
+    ///
+    /// On iOS 14+ this sets `includeAllNetworks = true` on the
+    /// NETunnelProviderProtocol, which instructs iOS to block all traffic
+    /// outside the VPN tunnel at the network layer. If the tunnel drops,
+    /// iOS itself prevents any traffic from leaking until the tunnel comes
+    /// back up — no user-space logic required.
+    ///
+    /// The preference is saved to the shared UserDefaults group so that the
+    /// Network Extension can also read it if needed. The manager configuration
+    /// is updated and saved immediately; if the VPN is currently connected the
+    /// caller is responsible for reconnecting to apply the new settings.
+    func setKillSwitch(enabled: Bool, completion: @escaping (Error?) -> Void) {
+        sharedDefaults?.set(enabled, forKey: killSwitchKey)
+
+        guard let manager = manager else {
+            // Not yet initialized — preference is saved and will be applied on
+            // the next setupManager() call.
+            completion(nil)
+            return
+        }
+
+        applyKillSwitchToProtocol(manager: manager, enabled: enabled)
+
+        manager.saveToPreferences { error in
+            if let error = error {
+                completion(error)
+                return
+            }
+            manager.loadFromPreferences { error in
+                completion(error)
+            }
+        }
+    }
+
     // MARK: - Private
 
     private func setupManager() {
@@ -126,9 +182,33 @@ class VpnManager: NSObject {
         proto.serverAddress = "VPN App" // Display name in Settings
         proto.disconnectOnSleep = false
 
+        // Apply the persisted kill switch preference
+        let killSwitchEnabled = sharedDefaults?.bool(forKey: killSwitchKey) ?? false
+        applyKillSwitchToProtocol(proto: proto, enabled: killSwitchEnabled)
+
         manager?.protocolConfiguration = proto
         manager?.localizedDescription = "VPN App"
         manager?.isEnabled = true
+    }
+
+    /// Applies includeAllNetworks / excludeLocalNetworks directly to a protocol
+    /// object. Requires iOS 14+; silently skipped on older OS versions.
+    private func applyKillSwitchToProtocol(proto: NETunnelProviderProtocol, enabled: Bool) {
+        if #available(iOS 14.0, *) {
+            // Route ALL traffic through the VPN (kill switch)
+            proto.includeAllNetworks = enabled
+            // Still allow LAN/mDNS/AirDrop so local network features work
+            proto.excludeLocalNetworks = enabled
+        }
+    }
+
+    /// Convenience overload that reads the protocol from an existing manager.
+    private func applyKillSwitchToProtocol(manager: NETunnelProviderManager, enabled: Bool) {
+        guard let proto = manager.protocolConfiguration as? NETunnelProviderProtocol else {
+            return
+        }
+        applyKillSwitchToProtocol(proto: proto, enabled: enabled)
+        manager.protocolConfiguration = proto
     }
 
     private func observeStatus() {

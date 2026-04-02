@@ -82,6 +82,16 @@
       }
     }
   },
+  "splitTunnel": {
+    "title": "Split Tunneling",
+    "description": "Choose which apps (Android) or domains (iOS) bypass the VPN and use your regular connection.",
+    "searchApps": "Search apps...",
+    "noApps": "No items added yet",
+    "excludedApps": "Excluded apps",
+    "addDomain": "Add",
+    "domains": "Bypassed domains",
+    "domainPlaceholder": "e.g. banking.com"
+  },
   "errorBoundary": {
     "title": "Something went wrong",
     "message": "An unexpected error occurred. Please try again.",
