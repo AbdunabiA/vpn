@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+
 // newHandlerTestDB opens an in-memory SQLite database suitable for handler
 // integration tests.
 //
@@ -410,5 +411,131 @@ func TestListActiveConnections_ExcludesDisconnected(t *testing.T) {
 	data := body["data"].([]interface{})
 	if len(data) != 1 {
 		t.Errorf("expected 1 active connection after disconnect, got %d", len(data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional edge-case tests
+// ---------------------------------------------------------------------------
+
+// TestRegisterConnection_InactiveServer_ReturnsNotFound ensures that an
+// inactive server cannot accept new connections (clients must not reach
+// a drained server).
+func TestRegisterConnection_InactiveServer_ReturnsNotFound(t *testing.T) {
+	db := newHandlerTestDB(t)
+
+	// Seed an inactive server via raw SQL.
+	srvID := "00000000-0000-0000-0000-000000000099"
+	if err := db.Exec(`INSERT INTO vpn_servers
+		(id, hostname, ip_address, region, city, country, country_code, protocol, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		srvID, "inactive-for-conn", "10.0.0.99", "EU", "London", "UK", "GB", "vless-reality",
+	).Error; err != nil {
+		t.Fatalf("failed to seed inactive server: %v", err)
+	}
+
+	app := buildApp(db, "user-inactive-srv", "premium")
+	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
+		"server_id": srvID,
+	})
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for inactive server, got %d; body: %v", resp.StatusCode, body)
+	}
+}
+
+// TestUnregisterConnection_InvalidIDFormat ensures the handler degrades
+// gracefully when the connection ID in the URL is not a valid UUID.
+func TestUnregisterConnection_InvalidIDFormat_ReturnsNotFound(t *testing.T) {
+	db := newHandlerTestDB(t)
+	app := buildApp(db, "user-bad-id", "premium")
+
+	resp, _ := doRequest(t, app, http.MethodDelete, "/connections/not-a-valid-uuid", nil)
+	// The repo will do a WHERE id = 'not-a-valid-uuid' which returns no rows → 404.
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for invalid connection ID format, got %d", resp.StatusCode)
+	}
+}
+
+// TestRegisterConnection_EmptyBody_ReturnsBadRequest tests that an empty
+// JSON body (not just missing server_id) is handled properly.
+func TestRegisterConnection_EmptyBody_ReturnsBadRequest(t *testing.T) {
+	db := newHandlerTestDB(t)
+	app := buildApp(db, "user-empty-body", "free")
+
+	req := httptest.NewRequest(http.MethodPost, "/connections", nil)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("app.Test failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("empty body: expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestRegisterConnection_InvalidJSON_ReturnsBadRequest ensures the handler
+// does not panic on malformed JSON input.
+func TestRegisterConnection_InvalidJSON_ReturnsBadRequest(t *testing.T) {
+	db := newHandlerTestDB(t)
+	app := buildApp(db, "user-bad-json", "free")
+
+	req := httptest.NewRequest(http.MethodPost, "/connections", bytes.NewBufferString("{bad json"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("app.Test failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid JSON: expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestUnregisterConnection_WithTrafficStats verifies that non-zero byte
+// counters are persisted when a connection is unregistered.
+func TestUnregisterConnection_WithTrafficStats_PersistsByteCounts(t *testing.T) {
+	db := newHandlerTestDB(t)
+	srv := seedActiveServer(t, db)
+	const userID = "user-traffic"
+	app := buildApp(db, userID, "premium")
+
+	createResp, createBody := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
+		"server_id": srv.ID,
+	})
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("setup: expected 201, got %d", createResp.StatusCode)
+	}
+	connID := createBody["data"].(map[string]interface{})["id"].(string)
+
+	resp, _ := doRequest(t, app, http.MethodDelete, "/connections/"+connID, map[string]int64{
+		"bytes_up":   123456,
+		"bytes_down": 654321,
+	})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", resp.StatusCode)
+	}
+}
+
+// TestRegisterConnection_FreeUserMaxDevicesIsOne verifies that the free-tier
+// limit of exactly 1 simultaneous device is enforced (not 0, not 2).
+func TestRegisterConnection_FreeUserExactlyOneAllowed(t *testing.T) {
+	db := newHandlerTestDB(t)
+	srv := seedActiveServer(t, db)
+	app := buildApp(db, "user-free-exact", "free")
+
+	// Exactly 1 device allowed.
+	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
+		"server_id": srv.ID,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("first connection (free): expected 201, got %d; body: %v", resp.StatusCode, body)
+	}
+
+	// Immediately a second connection must be rejected.
+	resp2, body2 := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
+		"server_id": srv.ID,
+	})
+	if resp2.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("second connection (free): expected 429, got %d; body: %v", resp2.StatusCode, body2)
 	}
 }

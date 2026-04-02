@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"vpnapp/server/api/internal/cache"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -18,20 +20,33 @@ const (
 
 // RateLimit returns per-user rate-limit middleware backed by Redis.
 //
-// Authenticated requests (those that already have "user_id" in context locals,
-// set by AuthRequired) are limited to authenticatedRateLimit req/min keyed on
-// the user ID. Unauthenticated requests are limited to unauthenticatedRateLimit
-// req/min keyed on the client IP.
+// When a valid Bearer token is present in the Authorization header, the JWT is
+// decoded (without verifying the signature — expiry/tamper checks happen in
+// AuthRequired) to extract the user ID for per-user rate limiting at
+// authenticatedRateLimit req/min.  If no token is present, or the token cannot
+// be decoded, the request is limited per client IP at unauthenticatedRateLimit
+// req/min.
 //
 // When Redis is unavailable IncrRateLimit returns an error and the request is
 // allowed through — the middleware degrades gracefully rather than blocking
 // all traffic during a Redis outage.
-func RateLimit(redisClient *redis.Client, logger *zap.Logger) fiber.Handler {
+func RateLimit(redisClient *redis.Client, logger *zap.Logger, jwtSecret string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var key string
 		var limit int64
 
+		// First check if auth middleware already set user_id in locals.
 		userID, _ := c.Locals("user_id").(string)
+
+		// If not set yet (rate limiter is running before auth middleware),
+		// try to extract user_id directly from the Authorization header.
+		if userID == "" {
+			if authHeader := c.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+				userID = extractUserIDFromToken(tokenStr, jwtSecret)
+			}
+		}
+
 		if userID != "" {
 			key = "user:" + userID
 			limit = authenticatedRateLimit
@@ -59,4 +74,34 @@ func RateLimit(redisClient *redis.Client, logger *zap.Logger) fiber.Handler {
 
 		return c.Next()
 	}
+}
+
+// extractUserIDFromToken parses a JWT and returns the "sub" claim without
+// performing expiry or signature validation. It is used only for rate-limit key
+// selection — AuthRequired performs full validation for protected routes.
+func extractUserIDFromToken(tokenStr, jwtSecret string) string {
+	token, _, err := jwt.NewParser().ParseUnverified(tokenStr, jwt.MapClaims{})
+	if err != nil {
+		return ""
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return ""
+	}
+
+	// Only use the claim if the signature is actually valid — we don't want
+	// an attacker to spoof a high-traffic user_id to bypass IP limiting.
+	verifiedToken, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(jwtSecret), nil
+	}, jwt.WithoutClaimsValidation())
+	if err != nil || !verifiedToken.Valid {
+		return ""
+	}
+
+	sub, _ := claims["sub"].(string)
+	return sub
 }

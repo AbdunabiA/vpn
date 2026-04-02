@@ -61,16 +61,16 @@ func BlacklistToken(ctx context.Context, client *redis.Client, tokenHash string,
 const rateLimitKeyPrefix = "rate:"
 
 // IncrRateLimit increments the request counter for the given rate-limit key
-// and sets the expiry to window on the first increment (sliding-window style).
-// Returns the current counter value after incrementing.
+// and sets the expiry to window on the first increment only, so the window
+// does not reset on every request. Returns the current counter value after
+// incrementing.
 func IncrRateLimit(ctx context.Context, client *redis.Client, key string, window time.Duration) (int64, error) {
 	fullKey := rateLimitKeyPrefix + key
 
-	// Pipeline INCR + EXPIRE so we do not leave keys without a TTL if the
-	// EXPIRE call would otherwise fail after INCR succeeds.
+	// INCR is atomic — pipeline it with nothing else so we get the count back
+	// cleanly before deciding whether to set the expiry.
 	pipe := client.Pipeline()
 	incrCmd := pipe.Incr(ctx, fullKey)
-	pipe.Expire(ctx, fullKey, window)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		return 0, fmt.Errorf("rate limit pipeline: %w", err)
@@ -79,6 +79,17 @@ func IncrRateLimit(ctx context.Context, client *redis.Client, key string, window
 	count, err := incrCmd.Result()
 	if err != nil {
 		return 0, fmt.Errorf("reading incr result: %w", err)
+	}
+
+	// Only set the expiry on the very first increment so the window is fixed
+	// from the moment the counter was created — subsequent increments within
+	// the same window must not push the expiry forward.
+	if count == 1 {
+		if err := client.Expire(ctx, fullKey, window).Err(); err != nil {
+			// Non-fatal: counter exists, expiry failed. Log externally if needed.
+			// The key will be cleaned up by Redis eventually or on the next request.
+			return count, fmt.Errorf("setting rate limit expiry: %w", err)
+		}
 	}
 
 	return count, nil

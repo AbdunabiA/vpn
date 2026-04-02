@@ -19,12 +19,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Stripe price IDs — replace with real IDs from the Stripe dashboard before going live.
-const (
-	StripePriceIDPremium  = "price_PLACEHOLDER_PREMIUM"
-	StripePriceIDUltimate = "price_PLACEHOLDER_ULTIMATE"
-)
-
 type checkoutRequest struct {
 	Plan string `json:"plan"`
 }
@@ -48,14 +42,12 @@ func CreateCheckoutSession(logger *zap.Logger, cfg *config.Config, db *gorm.DB) 
 			})
 		}
 
-		priceID, err := planToPriceID(req.Plan)
+		priceID, err := planToPriceID(req.Plan, cfg)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": err.Error(),
 			})
 		}
-
-		stripe.Key = cfg.StripeKey
 
 		successURL := fmt.Sprintf("%s://payment/success?session_id={CHECKOUT_SESSION_ID}", cfg.AppDeepLinkScheme)
 		cancelURL := fmt.Sprintf("%s://payment/cancel", cfg.AppDeepLinkScheme)
@@ -193,9 +185,7 @@ func CancelSubscription(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fib
 			})
 		}
 
-		stripe.Key = cfg.StripeKey
-
-		// Cancel at period end to avoid proration surprises.
+			// Cancel at period end to avoid proration surprises.
 		cancelParams := &stripe.SubscriptionCancelParams{
 			InvoiceNow: stripe.Bool(false),
 			Prorate:    stripe.Bool(false),
@@ -243,13 +233,13 @@ func CancelSubscription(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fib
 	}
 }
 
-// planToPriceID maps a plan name to the corresponding Stripe price ID.
-func planToPriceID(plan string) (string, error) {
+// planToPriceID maps a plan name to the corresponding Stripe price ID from config.
+func planToPriceID(plan string, cfg *config.Config) (string, error) {
 	switch plan {
 	case "premium":
-		return StripePriceIDPremium, nil
+		return cfg.StripePricePremium, nil
 	case "ultimate":
-		return StripePriceIDUltimate, nil
+		return cfg.StripePriceUltimate, nil
 	default:
 		return "", fmt.Errorf("invalid plan %q: must be \"premium\" or \"ultimate\"", plan)
 	}

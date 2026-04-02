@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"vpnapp/server/api/internal/config"
@@ -47,6 +48,12 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 		if req.Email == "" || len(req.Password) < 8 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "email required, password must be at least 8 characters",
+			})
+		}
+
+		if !strings.Contains(req.Email, "@") || len(req.Email) < 5 || len(req.Email) > 255 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "invalid email format",
 			})
 		}
 
@@ -125,6 +132,12 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 		if req.Email == "" || req.Password == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "email and password required",
+			})
+		}
+
+		if !strings.Contains(req.Email, "@") || len(req.Email) < 5 || len(req.Email) > 255 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "invalid email format",
 			})
 		}
 

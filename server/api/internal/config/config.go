@@ -14,6 +14,8 @@ type Config struct {
 	JWTSecret           string
 	StripeKey           string
 	StripeWebhookSecret string
+	StripePricePremium  string
+	StripePriceUltimate string
 	AppDeepLinkScheme   string
 }
 
@@ -31,6 +33,8 @@ func Load() (*Config, error) {
 		JWTSecret:           getEnv("JWT_SECRET", ""),
 		StripeKey:           getEnv("STRIPE_KEY", ""),
 		StripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
+		StripePricePremium:  getEnv("STRIPE_PRICE_PREMIUM", "price_PLACEHOLDER_PREMIUM"),
+		StripePriceUltimate: getEnv("STRIPE_PRICE_ULTIMATE", "price_PLACEHOLDER_ULTIMATE"),
 		AppDeepLinkScheme:   getEnv("APP_DEEP_LINK", "vpnapp"),
 	}
 

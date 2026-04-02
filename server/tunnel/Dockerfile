@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /build
 
@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o tunnel-server ./cmd/tu
 # --- Runtime image ---
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates iptables ip6tables
+RUN apk add --no-cache ca-certificates iptables ip6tables iproute2 wireguard-tools
 
 WORKDIR /app
 

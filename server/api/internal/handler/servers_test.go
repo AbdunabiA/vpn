@@ -160,11 +160,13 @@ func TestGetServerConfig_WithAWG_IncludesAWGField(t *testing.T) {
 	if err := db.Exec(`
 		INSERT INTO vpn_servers
 			(id, hostname, ip_address, region, city, country, country_code,
-			 protocol, is_active, awg_public_key, awg_endpoint, awg_params)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 protocol, is_active, reality_public_key, reality_short_id,
+			 awg_public_key, awg_endpoint, awg_params)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		uuid.NewString(), "test-with-awg", "10.0.0.1",
 		"EU", "Amsterdam", "Netherlands", "NL",
 		"vless-reality", 1,
+		"TestRealityPublicKey123456789012345678901234", "abcd1234",
 		pubKey, endpoint, awgParamsJSON,
 	).Error; err != nil {
 		t.Fatalf("failed to seed AWG server: %v", err)
@@ -217,11 +219,13 @@ func TestGetServerConfig_WithAWG_AllowedIPsIsFullTunnel(t *testing.T) {
 	if err := db.Exec(`
 		INSERT INTO vpn_servers
 			(id, hostname, ip_address, region, city, country, country_code,
-			 protocol, is_active, awg_public_key, awg_endpoint)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 protocol, is_active, reality_public_key, reality_short_id,
+			 awg_public_key, awg_endpoint)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		uuid.NewString(), "test-awg-ips", "1.2.3.4",
 		"AS", "Tokyo", "Japan", "JP",
 		"vless-reality", 1,
+		"TestRealityPublicKey123456789012345678901234", "abcd1234",
 		pubKey, "1.2.3.4:51820",
 	).Error; err != nil {
 		t.Fatalf("failed to seed: %v", err)

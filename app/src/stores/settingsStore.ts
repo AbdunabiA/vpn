@@ -1,8 +1,19 @@
 import {create} from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as vpnBridge from '../services/vpnBridge';
 import type {VpnProtocol} from '../types/vpn';
 
 type ThemeMode = 'dark' | 'light' | 'system';
+
+const SETTINGS_KEY = 'app-settings';
+
+interface PersistedSettings {
+  protocol: VpnProtocol;
+  killSwitch: boolean;
+  autoReconnect: boolean;
+  excludedApps: string[];
+  excludedDomains: string[];
+}
 
 interface SettingsState {
   protocol: VpnProtocol;
@@ -19,6 +30,9 @@ interface SettingsState {
   excludedApps: string[];
   excludedDomains: string[];
 
+  // Called once on app startup — restores persisted settings from storage
+  initialize: () => void;
+
   setProtocol: (protocol: VpnProtocol) => void;
   setKillSwitch: (enabled: boolean) => void;
   setSplitTunneling: (enabled: boolean) => void;
@@ -30,7 +44,22 @@ interface SettingsState {
   setExcludedDomains: (domains: string[]) => void;
 }
 
-export const useSettingsStore = create<SettingsState>((set) => ({
+/** Persists the subset of settings that survive app restarts. */
+function persistSettings(partial: Partial<PersistedSettings>, current: SettingsState): void {
+  const snapshot: PersistedSettings = {
+    protocol: current.protocol,
+    killSwitch: current.killSwitch,
+    autoReconnect: current.autoReconnect,
+    excludedApps: current.excludedApps,
+    excludedDomains: current.excludedDomains,
+    ...partial,
+  };
+  AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshot)).catch((err) => {
+    console.error('[Settings] persist failed:', err);
+  });
+}
+
+export const useSettingsStore = create<SettingsState>((set, get) => ({
   protocol: 'auto',
   killSwitch: false,
   splitTunneling: false,
@@ -41,10 +70,33 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   excludedApps: [],
   excludedDomains: [],
 
-  setProtocol: (protocol) => set({protocol}),
+  initialize: () => {
+    AsyncStorage.getItem(SETTINGS_KEY).then((stored) => {
+      if (stored) {
+        try {
+          const saved = JSON.parse(stored) as Partial<PersistedSettings>;
+          set({
+            protocol: saved.protocol ?? 'auto',
+            killSwitch: saved.killSwitch ?? false,
+            autoReconnect: saved.autoReconnect ?? true,
+            excludedApps: saved.excludedApps ?? [],
+            excludedDomains: saved.excludedDomains ?? [],
+          });
+        } catch {
+          AsyncStorage.removeItem(SETTINGS_KEY);
+        }
+      }
+    });
+  },
+
+  setProtocol: (protocol) => {
+    set({protocol});
+    persistSettings({protocol}, get());
+  },
 
   setKillSwitch: (killSwitch) => {
     set({killSwitch});
+    persistSettings({killSwitch}, get());
     vpnBridge.setKillSwitch(killSwitch).catch((err) => {
       console.error('[Settings] setKillSwitch failed:', err);
     });
@@ -54,10 +106,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setDnsOverHttps: (dnsOverHttps) => set({dnsOverHttps}),
   setLanguage: (language) => set({language}),
   setTheme: (theme) => set({theme}),
-  setAutoReconnect: (autoReconnect) => set({autoReconnect}),
+
+  setAutoReconnect: (autoReconnect) => {
+    set({autoReconnect});
+    persistSettings({autoReconnect}, get());
+  },
 
   setExcludedApps: (excludedApps) => {
     set({excludedApps});
+    persistSettings({excludedApps}, get());
     vpnBridge.setExcludedApps(excludedApps).catch((err) => {
       console.error('[Settings] setExcludedApps failed:', err);
     });
@@ -65,6 +122,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   setExcludedDomains: (excludedDomains) => {
     set({excludedDomains});
+    persistSettings({excludedDomains}, get());
     vpnBridge.setExcludedDomains(excludedDomains).catch((err) => {
       console.error('[Settings] setExcludedDomains failed:', err);
     });

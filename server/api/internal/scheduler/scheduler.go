@@ -78,14 +78,19 @@ func Stop() {
 	s.wg.Wait()
 }
 
-// runCleanup deletes expired sessions and logs the result.
+// runCleanup deletes expired sessions and stale connections, and logs results.
 func runCleanup(db *gorm.DB, logger *zap.Logger) {
 	count, err := repository.DeleteExpiredSessions(db)
 	if err != nil {
 		logger.Error("session cleanup failed", zap.Error(err))
-		return
-	}
-	if count > 0 {
+	} else if count > 0 {
 		logger.Info("expired sessions cleaned up", zap.Int64("count", count))
+	}
+
+	staleCount, err := repository.CleanupStaleConnections(db, 24*time.Hour)
+	if err != nil {
+		logger.Error("stale connection cleanup failed", zap.Error(err))
+	} else if staleCount > 0 {
+		logger.Info("stale connections cleaned up", zap.Int64("count", staleCount))
 	}
 }

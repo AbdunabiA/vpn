@@ -17,7 +17,7 @@ import (
 func rateLimitApp(redisClient *redis.Client) *fiber.App {
 	logger := zap.NewNop()
 	app := fiber.New()
-	app.Use(middleware.RateLimit(redisClient, logger))
+	app.Use(middleware.RateLimit(redisClient, logger, testSecret))
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
@@ -102,7 +102,7 @@ func TestRateLimit_AuthenticatedUserIsolated(t *testing.T) {
 		}
 		return c.Next()
 	})
-	app.Use(middleware.RateLimit(client, logger))
+	app.Use(middleware.RateLimit(client, logger, testSecret))
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 
 	makeReq := func(userID string) int {
