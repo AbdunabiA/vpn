@@ -1,5 +1,5 @@
 import React from 'react';
-import {TouchableOpacity, Text, View, StyleSheet} from 'react-native';
+import {TouchableOpacity, Text, View, StyleSheet, Image} from 'react-native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {useTranslation} from 'react-i18next';
 import {useNavigation} from '@react-navigation/native';
@@ -11,6 +11,7 @@ import {SettingsScreen} from '../screens/SettingsScreen';
 import {AccountScreen} from '../screens/AccountScreen';
 import {PaymentScreen} from '../screens/PaymentScreen';
 import {SplitTunnelScreen} from '../screens/SplitTunnelScreen';
+import {useAuthStore} from '../stores/authStore';
 import {colors, typography, spacing} from '../theme';
 
 export type RootStackParamList = {
@@ -42,20 +43,8 @@ export function RootNavigator() {
         component={HomeScreen}
         options={({navigation}) => ({
           headerTitle: '',
-          headerLeft: () => (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Settings')}
-              style={navStyles.headerBtn}>
-              <Text style={navStyles.headerIcon}>&#9881;</Text>
-            </TouchableOpacity>
-          ),
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Account')}
-              style={navStyles.headerBtn}>
-              <Text style={navStyles.headerIcon}>&#9786;</Text>
-            </TouchableOpacity>
-          ),
+          headerLeft: () => <SettingsButton onPress={() => navigation.navigate('Settings')} />,
+          headerRight: () => <ProfileButton onPress={() => navigation.navigate('Account')} />,
         })}
       />
       <Stack.Screen
@@ -87,12 +76,54 @@ export function RootNavigator() {
   );
 }
 
+function SettingsButton({onPress}: {onPress: () => void}) {
+  return (
+    <TouchableOpacity onPress={onPress} style={navStyles.headerBtn}>
+      <View style={navStyles.gearIcon}>
+        <Text style={navStyles.gearText}>{'  \u2699'}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ProfileButton({onPress}: {onPress: () => void}) {
+  const user = useAuthStore(s => s.user);
+  const initial = user?.full_name?.charAt(0)?.toUpperCase() || '?';
+
+  return (
+    <TouchableOpacity onPress={onPress} style={navStyles.headerBtn}>
+      <View style={navStyles.avatarCircle}>
+        <Text style={navStyles.avatarText}>{initial}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 const navStyles = StyleSheet.create({
   headerBtn: {
     padding: spacing.sm,
   },
-  headerIcon: {
+  gearIcon: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gearText: {
     fontSize: 22,
+    color: colors.textSecondary,
+  },
+  avatarCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.textPrimary,
   },
 });
