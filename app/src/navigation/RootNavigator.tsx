@@ -1,13 +1,16 @@
 import React from 'react';
+import {TouchableOpacity, Text, View, StyleSheet} from 'react-native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {useTranslation} from 'react-i18next';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 
 import {HomeScreen} from '../screens/HomeScreen';
 import {ServerListScreen} from '../screens/ServerListScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {AccountScreen} from '../screens/AccountScreen';
 import {PaymentScreen} from '../screens/PaymentScreen';
-import {colors, typography} from '../theme';
+import {colors, typography, spacing} from '../theme';
 
 export type RootStackParamList = {
   Home: undefined;
@@ -35,11 +38,23 @@ export function RootNavigator() {
       <Stack.Screen
         name="Home"
         component={HomeScreen}
-        options={{
+        options={({navigation}) => ({
           headerTitle: '',
-          headerLeft: () => null,
-          // Settings and Account buttons will be added as headerRight
-        }}
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Settings')}
+              style={navStyles.headerBtn}>
+              <Text style={navStyles.headerIcon}>&#9881;</Text>
+            </TouchableOpacity>
+          ),
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Account')}
+              style={navStyles.headerBtn}>
+              <Text style={navStyles.headerIcon}>&#9786;</Text>
+            </TouchableOpacity>
+          ),
+        })}
       />
       <Stack.Screen
         name="ServerList"
@@ -64,3 +79,13 @@ export function RootNavigator() {
     </Stack.Navigator>
   );
 }
+
+const navStyles = StyleSheet.create({
+  headerBtn: {
+    padding: spacing.sm,
+  },
+  headerIcon: {
+    fontSize: 22,
+    color: colors.textPrimary,
+  },
+});
