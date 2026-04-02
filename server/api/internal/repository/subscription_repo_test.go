@@ -28,6 +28,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 			id                      TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
 			email_hash              TEXT NOT NULL UNIQUE,
 			password_hash           TEXT NOT NULL,
+			full_name               TEXT NOT NULL DEFAULT '',
 			subscription_tier       TEXT NOT NULL DEFAULT 'free',
 			subscription_expires_at DATETIME,
 			role                    TEXT NOT NULL DEFAULT 'user',

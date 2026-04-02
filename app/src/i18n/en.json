@@ -46,6 +46,7 @@
   },
   "account": {
     "title": "Account",
+    "profile": "Profile",
     "login": "Log In",
     "register": "Sign Up",
     "logout": "Log Out",
@@ -56,7 +57,17 @@
     "premiumPlan": "Premium",
     "upgradeToPremium": "Upgrade to Premium",
     "devices": "Devices",
-    "expiresOn": "Expires {{date}}"
+    "expiresOn": "Expires {{date}}",
+    "fullName": "Full Name",
+    "editName": "Edit Name",
+    "saveName": "Save",
+    "emailVerified": "Email Verified",
+    "memberSince": "Member Since",
+    "activeDevices": "Active Devices"
+  },
+  "register": {
+    "namePlaceholder": "Your full name",
+    "nameRequired": "Name must be at least 2 characters"
   },
   "payment": {
     "title": "Choose a Plan",

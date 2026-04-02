@@ -46,6 +46,7 @@
   },
   "account": {
     "title": "Аккаунт",
+    "profile": "Профиль",
     "login": "Войти",
     "register": "Регистрация",
     "logout": "Выйти",
@@ -56,7 +57,17 @@
     "premiumPlan": "Премиум",
     "upgradeToPremium": "Перейти на Премиум",
     "devices": "Устройства",
-    "expiresOn": "Действует до {{date}}"
+    "expiresOn": "Действует до {{date}}",
+    "fullName": "Полное имя",
+    "editName": "Изменить имя",
+    "saveName": "Сохранить",
+    "emailVerified": "Email подтверждён",
+    "memberSince": "Участник с",
+    "activeDevices": "Активные устройства"
+  },
+  "register": {
+    "namePlaceholder": "Ваше полное имя",
+    "nameRequired": "Имя должно содержать минимум 2 символа"
   },
   "payment": {
     "title": "Выберите план",

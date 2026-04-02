@@ -68,3 +68,17 @@ func UpdateUserTier(db *gorm.DB, userID, tier string) error {
 	}
 	return nil
 }
+
+// UpdateUserName sets the full_name on the users row identified by id.
+func UpdateUserName(db *gorm.DB, userID, fullName string) error {
+	result := db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("full_name", fullName)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

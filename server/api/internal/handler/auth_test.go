@@ -44,6 +44,7 @@ func newAuthTestDB(t *testing.T) *gorm.DB {
 			id                     TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
 			email_hash              TEXT NOT NULL UNIQUE,
 			password_hash           TEXT NOT NULL,
+			full_name               TEXT NOT NULL DEFAULT '',
 			subscription_tier       TEXT NOT NULL DEFAULT 'free',
 			subscription_expires_at DATETIME,
 			role                    TEXT NOT NULL DEFAULT 'user',
@@ -170,6 +171,7 @@ func TestRegister_EmailAtMaxLength_Returns201(t *testing.T) {
 	resp := doAuthRequest(t, app, map[string]string{
 		"email":    email,
 		"password": "validpassword123",
+		"name":     "Test User",
 	})
 	if resp.StatusCode != fiber.StatusCreated {
 		t.Errorf("email at max 255 chars: expected 201, got %d", resp.StatusCode)
@@ -189,6 +191,7 @@ func TestRegister_DuplicateEmail_RejectsSecondRegistration(t *testing.T) {
 	body := map[string]string{
 		"email":    "dup@example.com",
 		"password": "password123",
+		"name":     "Dup User",
 	}
 
 	// First registration must succeed.
@@ -225,6 +228,7 @@ func TestRegister_HappyPath_Returns201WithTokens(t *testing.T) {
 	resp := doAuthRequest(t, app, map[string]string{
 		"email":    "new@example.com",
 		"password": "validpassword",
+		"name":     "New User",
 	})
 	if resp.StatusCode != fiber.StatusCreated {
 		t.Fatalf("happy path: expected 201, got %d", resp.StatusCode)
@@ -294,6 +298,7 @@ func TestLogin_WrongPassword_Returns401(t *testing.T) {
 	regResp := doAuthRequest(t, regApp, map[string]string{
 		"email":    "real@example.com",
 		"password": "correctpassword",
+		"name":     "Real User",
 	})
 	if regResp.StatusCode != fiber.StatusCreated {
 		t.Fatalf("setup: registration failed with %d", regResp.StatusCode)
@@ -318,6 +323,7 @@ func TestLogin_HappyPath_Returns200WithTokens(t *testing.T) {
 	doAuthRequest(t, regApp, map[string]string{
 		"email":    "valid@example.com",
 		"password": "mypassword1",
+		"name":     "Valid User",
 	})
 
 	loginApp := authTestApp(Login(zap.NewNop(), testAuthConfig(), db))
@@ -376,6 +382,7 @@ func TestRefreshToken_TokenRotation_DeletesOldSession(t *testing.T) {
 	regResp := doAuthRequest(t, regApp, map[string]string{
 		"email":    "refresh@example.com",
 		"password": "password123",
+		"name":     "Refresh User",
 	})
 	if regResp.StatusCode != fiber.StatusCreated {
 		t.Fatalf("setup: registration failed with %d", regResp.StatusCode)
@@ -416,6 +423,7 @@ func TestRefreshToken_HappyPath_ReturnsNewTokens(t *testing.T) {
 	regResp := doAuthRequest(t, regApp, map[string]string{
 		"email":    "tokenrotate@example.com",
 		"password": "password123",
+		"name":     "Token User",
 	})
 	if regResp.StatusCode != fiber.StatusCreated {
 		t.Fatalf("setup: registration failed with %d", regResp.StatusCode)

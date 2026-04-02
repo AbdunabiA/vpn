@@ -8,6 +8,7 @@ export interface ApiResponse<T> {
 export interface User {
   id: string;
   email_hash: string;
+  full_name: string;
   subscription_tier: 'free' | 'premium' | 'ultimate';
   subscription_expires_at: string | null;
   created_at: string;
