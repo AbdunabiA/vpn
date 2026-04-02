@@ -318,3 +318,250 @@ func TestSetProtectCallbackNilSafe(t *testing.T) {
 	SetProtectCallback(nil)
 	registerDialerController()
 }
+
+// --- WebSocket config builder tests ---
+
+func TestBuildWebSocketXRayConfigStructure(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+
+	data, err := json.Marshal(xrayConfig)
+	if err != nil {
+		t.Fatalf("failed to marshal websocket xray config: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal websocket xray config: %v", err)
+	}
+
+	if _, ok := parsed["inbounds"]; !ok {
+		t.Error("websocket xray config missing 'inbounds'")
+	}
+	if _, ok := parsed["outbounds"]; !ok {
+		t.Error("websocket xray config missing 'outbounds'")
+	}
+	if _, ok := parsed["dns"]; !ok {
+		t.Error("websocket xray config missing 'dns' section (DNS leak risk)")
+	}
+}
+
+func TestBuildWebSocketXRayConfigUsesWsNetwork(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, `"network":"ws"`) {
+		t.Error("websocket xray config must use network=ws")
+	}
+	if !strings.Contains(jsonStr, `"security":"tls"`) {
+		t.Error("websocket xray config must use security=tls (standard TLS, not reality)")
+	}
+	if strings.Contains(jsonStr, `"realitySettings"`) {
+		t.Error("websocket xray config must NOT contain realitySettings — Cloudflare handles TLS")
+	}
+}
+
+func TestBuildWebSocketXRayConfigEmptyFlow(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	// xtls-rprx-vision is incompatible with WebSocket transport
+	if strings.Contains(jsonStr, "xtls-rprx-vision") {
+		t.Error("websocket xray config must NOT set flow=xtls-rprx-vision — vision is TCP-only")
+	}
+}
+
+func TestBuildWebSocketXRayConfigCDNDomainAsAddress(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	// Client must connect to the CDN domain, not directly to the server IP.
+	// Traffic goes: Phone → Cloudflare (vpn.example.com) → origin server.
+	if !strings.Contains(jsonStr, "vpn.example.com") {
+		t.Error("websocket xray config must use CDN domain as address, not server IP")
+	}
+}
+
+func TestBuildWebSocketXRayConfigPort443(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+
+	outbounds, ok := xrayConfig["outbounds"].([]map[string]interface{})
+	if !ok || len(outbounds) == 0 {
+		t.Fatal("websocket xray config missing outbounds slice")
+	}
+
+	vlessOut := outbounds[0]
+	settings, ok := vlessOut["settings"].(map[string]interface{})
+	if !ok {
+		t.Fatal("websocket outbound missing settings")
+	}
+
+	vnext, ok := settings["vnext"].([]map[string]interface{})
+	if !ok || len(vnext) == 0 {
+		t.Fatal("websocket outbound missing vnext")
+	}
+
+	port, ok := vnext[0]["port"].(int)
+	if !ok {
+		t.Fatal("websocket vnext port is not an int")
+	}
+	if port != 443 {
+		t.Errorf("websocket xray config must use port 443 for Cloudflare HTTPS, got %d", port)
+	}
+}
+
+func TestBuildWebSocketXRayConfigHasSocksAuth(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, `"auth":"password"`) {
+		t.Error("websocket xray config missing SOCKS5 authentication")
+	}
+	if !strings.Contains(jsonStr, `"accounts"`) {
+		t.Error("websocket xray config missing SOCKS5 accounts")
+	}
+}
+
+func TestBuildWebSocketXRayConfigNilWebSocket_FallsBackToServerAddress(t *testing.T) {
+	resetManager()
+	// WebSocket field omitted — should fall back to ServerAddress as host
+	config := ConnectConfig{
+		ServerAddress: "myserver.example.com",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket:     nil,
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, "myserver.example.com") {
+		t.Error("websocket xray config should fall back to ServerAddress when WebSocket is nil")
+	}
+}
+
+func TestBuildWebSocketXRayConfigCustomPath(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress: "1.2.3.4",
+		ServerPort:    443,
+		Protocol:      "vless-ws",
+		UserID:        "test-uuid",
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/tunnel",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, "/tunnel") {
+		t.Error("websocket xray config should use the custom path from WebSocketConfig")
+	}
+}
+
+func TestBuildWebSocketXRayConfigSplitTunnel(t *testing.T) {
+	resetManager()
+	config := ConnectConfig{
+		ServerAddress:   "1.2.3.4",
+		ServerPort:      443,
+		Protocol:        "vless-ws",
+		UserID:          "test-uuid",
+		ExcludedDomains: []string{"local.corp", "intranet.corp"},
+		WebSocket: &WebSocketConfig{
+			Host: "vpn.example.com",
+			Path: "/ws",
+		},
+	}
+
+	xrayConfig := buildWebSocketXRayConfig(config)
+	data, _ := json.Marshal(xrayConfig)
+	jsonStr := string(data)
+
+	// Split tunnel excluded domains must appear in the routing rules
+	if !strings.Contains(jsonStr, "local.corp") {
+		t.Error("websocket xray config should preserve split tunnel excluded domains")
+	}
+	if !strings.Contains(jsonStr, "intranet.corp") {
+		t.Error("websocket xray config should preserve all excluded domains")
+	}
+}

@@ -1,0 +1,50 @@
+# Nginx reverse proxy for VLESS-over-WebSocket CDN transport.
+#
+# Prerequisites:
+#   1. A domain (e.g. vpn.example.com) pointed at this server's IP in Cloudflare DNS.
+#   2. Cloudflare proxy (orange cloud) enabled for that DNS record.
+#   3. Cloudflare SSL/TLS mode set to "Full" (not "Full (strict)") — or install a
+#      Cloudflare Origin Certificate if you want end-to-end encryption.
+#   4. xray-core running with websocket.enabled=true in config.json (port 8443 by default).
+#
+# Installation:
+#   cp nginx-ws.conf.example /etc/nginx/sites-available/vpn-ws
+#   ln -s /etc/nginx/sites-available/vpn-ws /etc/nginx/sites-enabled/vpn-ws
+#   nginx -t && systemctl reload nginx
+#
+# After Cloudflare terminates TLS the connection arrives here over plain HTTP.
+# Nginx upgrades it to a WebSocket connection and proxies to xray-core on localhost.
+
+server {
+    listen 80;
+    server_name vpn.example.com;
+
+    # WebSocket upgrade path — must match websocket.path in config.json and
+    # the client's WebSocket.Path field.
+    location /ws {
+        proxy_pass http://127.0.0.1:8443;
+        proxy_http_version 1.1;
+
+        # Required headers for WebSocket upgrade
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+
+        # Forward real client IP (useful for logging/rate limiting)
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        # Keep long-lived WebSocket connections alive.
+        # Cloudflare times out idle WebSocket connections at 100 s; set slightly
+        # higher here so Nginx does not close first.
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # Decoy page for any non-WebSocket request.
+    # Prevents probing tools from identifying this as a VPN endpoint.
+    location / {
+        return 200 'OK';
+        add_header Content-Type text/plain;
+    }
+}

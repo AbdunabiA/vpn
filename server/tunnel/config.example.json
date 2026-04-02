@@ -8,5 +8,26 @@
     "dest": "www.microsoft.com:443",
     "server_names": ["www.microsoft.com", "microsoft.com"]
   },
+  "websocket": {
+    "enabled": false,
+    "port": 8443,
+    "path": "/ws"
+  },
+  "awg": {
+    "enabled": false,
+    "listen_port": 51820,
+    "private_key": "SERVER_AWG_PRIVATE_KEY_BASE64",
+    "public_key": "SERVER_AWG_PUBLIC_KEY_BASE64",
+    "address": "10.8.0.1/24",
+    "jc": 5,
+    "jmin": 50,
+    "jmax": 1000,
+    "s1": 0,
+    "s2": 0,
+    "h1": 0,
+    "h2": 0,
+    "h3": 0,
+    "h4": 0
+  },
   "health_port": 8080
 }

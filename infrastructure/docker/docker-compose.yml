@@ -65,11 +65,35 @@ services:
     ports:
       - "443:443"
       - "8080:8080"
+      # AmneziaWG (WireGuard-based) uses UDP — protocol must be explicit.
+      # Ensure your firewall/security group allows inbound UDP 51820 as well.
+      - "51820:51820/udp"
     volumes:
       - ../../server/tunnel/config.example.json:/app/config.json:ro
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
+
+  # --- Optional: Nginx WebSocket CDN proxy ---
+  # Uncomment to enable VLESS-over-WebSocket transport through Cloudflare CDN.
+  #
+  # Prerequisites before enabling:
+  #   1. A domain pointed at this server with Cloudflare proxy (orange cloud) on.
+  #   2. Cloudflare SSL/TLS mode set to "Full".
+  #   3. websocket.enabled=true and websocket.port=8443 in tunnel/config.json.
+  #   4. Copy server/tunnel/nginx-ws.conf.example to ./nginx/vpn-ws.conf and
+  #      replace "vpn.example.com" with your actual CDN domain.
+  #
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: vpn-nginx
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx/vpn-ws.conf:/etc/nginx/conf.d/vpn-ws.conf:ro
+  #   depends_on:
+  #     - tunnel
+  #   restart: unless-stopped
 
 volumes:
   pgdata:

@@ -45,6 +45,12 @@ func newTestDB(t *testing.T) *gorm.DB {
 			is_active INTEGER NOT NULL DEFAULT 1,
 			reality_public_key TEXT,
 			reality_short_id TEXT,
+			ws_enabled INTEGER NOT NULL DEFAULT 0,
+			ws_host TEXT,
+			ws_path TEXT DEFAULT '/ws',
+			awg_public_key TEXT,
+			awg_endpoint TEXT,
+			awg_params TEXT,
 			created_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS connections (
