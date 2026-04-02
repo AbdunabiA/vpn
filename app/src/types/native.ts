@@ -17,6 +17,10 @@ export interface VpnNativeModule {
 
   // Get current traffic stats as JSON string.
   getTrafficStats(): Promise<string>;
+
+  // Enable or disable the OS-level kill switch.
+  // On Android this sets an always-on VPN flag; on iOS it toggles NEOnDemand rules.
+  setKillSwitch(enabled: boolean): Promise<void>;
 }
 
 // Event names emitted by the native module

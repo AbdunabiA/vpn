@@ -10,11 +10,17 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useAuthStore} from '../stores/authStore';
 import {colors, typography, spacing, borderRadius} from '../theme';
+import type {RootStackParamList} from '../navigation/RootNavigator';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export function AccountScreen() {
   const {t} = useTranslation();
+  const navigation = useNavigation<NavigationProp>();
   const {user, isAuthenticated} = useAuthStore();
 
   if (!isAuthenticated) {
@@ -33,7 +39,12 @@ export function AccountScreen() {
               : t('account.freePlan')}
           </Text>
           {(!user || user.subscription_tier === 'free') && (
-            <TouchableOpacity style={styles.upgradeButton}>
+            <TouchableOpacity
+              style={styles.upgradeButton}
+              onPress={() => navigation.navigate('Payment')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={t('account.upgradeToPremium')}>
               <Text style={styles.upgradeText}>{t('account.upgradeToPremium')}</Text>
             </TouchableOpacity>
           )}

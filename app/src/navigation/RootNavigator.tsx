@@ -6,6 +6,7 @@ import {HomeScreen} from '../screens/HomeScreen';
 import {ServerListScreen} from '../screens/ServerListScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {AccountScreen} from '../screens/AccountScreen';
+import {PaymentScreen} from '../screens/PaymentScreen';
 import {colors, typography} from '../theme';
 
 export type RootStackParamList = {
@@ -13,6 +14,7 @@ export type RootStackParamList = {
   ServerList: undefined;
   Settings: undefined;
   Account: undefined;
+  Payment: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -53,6 +55,11 @@ export function RootNavigator() {
         name="Account"
         component={AccountScreen}
         options={{title: t('account.title')}}
+      />
+      <Stack.Screen
+        name="Payment"
+        component={PaymentScreen}
+        options={{title: t('payment.title')}}
       />
     </Stack.Navigator>
   );

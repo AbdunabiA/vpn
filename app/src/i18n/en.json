@@ -15,6 +15,7 @@
     "connected": "Connected",
     "disconnected": "Not Connected",
     "reconnecting": "Reconnecting...",
+    "reconnectAttempt": "Reconnect attempt {{attempt}} of {{max}}",
     "tapToConnect": "Tap to secure your connection",
     "protectedSince": "Protected since {{time}}",
     "selectServer": "Select Server"
@@ -35,6 +36,8 @@
     "killSwitchDesc": "Block internet if VPN disconnects",
     "splitTunneling": "Split Tunneling",
     "dns": "DNS Settings",
+    "autoReconnect": "Auto-Reconnect",
+    "autoReconnectDesc": "Automatically reconnect when VPN drops",
     "language": "Language",
     "theme": "Theme",
     "darkTheme": "Dark",
@@ -54,5 +57,34 @@
     "upgradeToPremium": "Upgrade to Premium",
     "devices": "Devices",
     "expiresOn": "Expires {{date}}"
+  },
+  "payment": {
+    "title": "Choose a Plan",
+    "subtitle": "Unlock full protection with a premium plan",
+    "mostPopular": "Most Popular",
+    "currentPlan": "Current Plan",
+    "upgrade": "Upgrade",
+    "cancel": "Cancel Subscription",
+    "cancelConfirmTitle": "Cancel Subscription",
+    "cancelConfirmMessage": "Your plan will remain active until the end of the billing period.",
+    "errorTitle": "Payment Error",
+    "errorMessage": "Unable to start checkout. Please try again.",
+    "disclaimer": "Billed monthly. Cancel any time.",
+    "plans": {
+      "free": {
+        "name": "Free"
+      },
+      "premium": {
+        "name": "Premium"
+      },
+      "ultimate": {
+        "name": "Ultimate"
+      }
+    }
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. Please try again.",
+    "retry": "Retry"
   }
 }

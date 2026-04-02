@@ -98,6 +98,19 @@ export function onStatsUpdated(
   return () => subscription.remove();
 }
 
+// Enable or disable the OS-level kill switch
+export async function setKillSwitch(enabled: boolean): Promise<void> {
+  if (!VpnModule) {
+    if (__DEV__) {
+      console.log('[VPN Bridge] Simulating setKillSwitch:', enabled);
+      return;
+    }
+    throw new Error('VPN native module not available');
+  }
+
+  await VpnModule.setKillSwitch(enabled);
+}
+
 // Probe servers to find the fastest one
 export async function probeServers(
   servers: Array<{address: string; port: number}>,

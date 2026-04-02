@@ -10,6 +10,7 @@ type User struct {
 	PasswordHash          string     `json:"-" gorm:"not null"`
 	SubscriptionTier      string     `json:"subscription_tier" gorm:"default:free"`
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at"`
+	Role                  string     `json:"role" gorm:"type:varchar(20);default:user"`
 	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt             time.Time  `json:"-" gorm:"autoUpdateTime"`
 }

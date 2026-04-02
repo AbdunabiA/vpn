@@ -89,8 +89,8 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 			logger.Error("failed to create subscription", zap.Error(err))
 		}
 
-		// Generate JWT tokens
-		tokens, err := generateTokens(user.ID, "free", cfg.JWTSecret)
+		// Generate JWT tokens — new users always start with role "user"
+		tokens, err := generateTokens(user.ID, "free", "user", cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -150,8 +150,8 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Generate tokens with real user ID and tier
-		tokens, err := generateTokens(user.ID, user.SubscriptionTier, cfg.JWTSecret)
+		// Generate tokens with real user ID, tier, and role
+		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -211,8 +211,8 @@ func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Han
 			})
 		}
 
-		// Generate new token pair
-		tokens, err := generateTokens(user.ID, user.SubscriptionTier, cfg.JWTSecret)
+		// Generate new token pair with current role
+		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -243,13 +243,15 @@ func storeRefreshSession(db *gorm.DB, userID, refreshToken string) error {
 }
 
 // generateTokens creates a JWT access token (15 min) and refresh token (30 days).
-func generateTokens(userID, tier, secret string) (*authResponse, error) {
+// The role claim is embedded in the access token for admin middleware checks.
+func generateTokens(userID, tier, role, secret string) (*authResponse, error) {
 	now := time.Now()
 	accessExpiry := now.Add(15 * time.Minute)
 
 	accessClaims := jwt.MapClaims{
 		"sub":  userID,
 		"tier": tier,
+		"role": role,
 		"iat":  now.Unix(),
 		"exp":  accessExpiry.Unix(),
 	}

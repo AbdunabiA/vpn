@@ -49,8 +49,10 @@ func isDuplicateError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// PostgreSQL unique_violation error code is 23505
-	return errors.As(err, &err) && containsString(err.Error(), "23505")
+	// PostgreSQL unique_violation error code is 23505.
+	// We check the error message directly because the pgx driver wraps
+	// the pg error in a non-exported type.
+	return containsString(err.Error(), "23505")
 }
 
 func containsString(s, substr string) bool {

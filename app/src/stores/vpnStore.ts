@@ -13,12 +13,16 @@ interface VpnState {
   speedUp: number;
   speedDown: number;
   error: string | null;
+  reconnectAttempt: number;
+  connectionId: string | null;
 
   connect: (server: Server, config: ServerConfig) => Promise<void>;
   disconnect: () => Promise<void>;
   updateStatus: (status: TunnelStatus) => void;
   updateStats: (stats: TrafficStats) => void;
   clearError: () => void;
+  setReconnectAttempt: (attempt: number) => void;
+  setConnectionId: (id: string | null) => void;
 }
 
 export const useVpnStore = create<VpnState>((set, get) => ({
@@ -31,6 +35,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   speedUp: 0,
   speedDown: 0,
   error: null,
+  reconnectAttempt: 0,
+  connectionId: null,
 
   connect: async (server: Server, config: ServerConfig) => {
     const {connectionState} = get();
@@ -52,6 +58,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
       set({
         connectionState: 'connected',
         connectedAt: new Date(),
+        reconnectAttempt: 0,
       });
     } catch (err) {
       set({
@@ -79,6 +86,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         bytesDown: 0,
         speedUp: 0,
         speedDown: 0,
+        reconnectAttempt: 0,
+        connectionId: null,
       });
     } catch (err) {
       set({
@@ -109,4 +118,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   },
 
   clearError: () => set({error: null}),
+
+  setReconnectAttempt: (attempt) => set({reconnectAttempt: attempt}),
+
+  setConnectionId: (id) => set({connectionId: id}),
 }));
