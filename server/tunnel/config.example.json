@@ -1,6 +1,7 @@
 {
   "port": 443,
   "protocol": "vless-reality",
+  "clients": ["xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"],
   "reality": {
     "private_key": "skdzW5MPSEOtk2yk4T3le-zIDcQEhb5hsPu5U-dpVKo",
     "public_key": "OAmaJn5JqNlYdNIulgafHAwZs8MLLuU8MXs9rt26sl0",
@@ -27,7 +28,13 @@
     "h1": 0,
     "h2": 0,
     "h3": 0,
-    "h4": 0
+    "h4": 0,
+    "peers": [
+      {
+        "public_key": "CLIENT_AWG_PUBLIC_KEY_BASE64",
+        "allowed_ips": "10.8.0.2/32"
+      }
+    ]
   },
   "health_port": 8080
 }

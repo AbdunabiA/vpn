@@ -151,40 +151,49 @@ func Connect(configJSON string) string {
 
 	var config ConnectConfig
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
-		mgr.setStatus(TunnelStatus{
+		errStatus := TunnelStatus{
 			State: StateError,
 			Error: fmt.Sprintf("invalid config: %v", err),
-		})
+		}
+		mgr.setStatus(errStatus)
 		mgr.mu.Unlock()
+		mgr.notifyStatus(errStatus)
 		return fmt.Sprintf("invalid config: %v", err)
 	}
 
 	// Validate required fields
 	if config.ServerAddress == "" {
 		errMsg := "server_address is required"
-		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
+		mgr.setStatus(errStatus)
 		mgr.mu.Unlock()
+		mgr.notifyStatus(errStatus)
 		return errMsg
 	}
 	if config.ServerPort <= 0 || config.ServerPort > 65535 {
 		errMsg := "invalid server_port"
-		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
+		mgr.setStatus(errStatus)
 		mgr.mu.Unlock()
+		mgr.notifyStatus(errStatus)
 		return errMsg
 	}
 	// user_id is required for xray-based protocols; not used for AmneziaWG.
 	if config.Protocol != "amneziawg" && config.UserID == "" {
 		errMsg := "user_id is required"
-		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
+		mgr.setStatus(errStatus)
 		mgr.mu.Unlock()
+		mgr.notifyStatus(errStatus)
 		return errMsg
 	}
 
-	mgr.setStatus(TunnelStatus{
+	connectingStatus := TunnelStatus{
 		State:      StateConnecting,
 		ServerAddr: fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort),
 		Protocol:   config.Protocol,
-	})
+	}
+	mgr.setStatus(connectingStatus)
 
 	mgr.stopCh = make(chan struct{})
 
@@ -193,6 +202,7 @@ func Connect(configJSON string) string {
 	readyCh := make(chan string, 1)
 	go mgr.runTunnel(config, readyCh)
 	mgr.mu.Unlock()
+	mgr.notifyStatus(connectingStatus)
 
 	// Block until xray-core is ready or errored
 	return <-readyCh
@@ -208,7 +218,8 @@ func Disconnect() string {
 		return ""
 	}
 
-	mgr.setStatus(TunnelStatus{State: StateDisconnecting})
+	disconnectingStatus := TunnelStatus{State: StateDisconnecting}
+	mgr.setStatus(disconnectingStatus)
 
 	// Close XRay-core instance (nil-safe; only set for xray-based protocols).
 	if mgr.xrayInstance != nil {
@@ -228,8 +239,11 @@ func Disconnect() string {
 		mgr.stopCh = nil
 	}
 
-	mgr.setStatus(TunnelStatus{State: StateDisconnected})
+	disconnectedStatus := TunnelStatus{State: StateDisconnected}
+	mgr.setStatus(disconnectedStatus)
 	mgr.mu.Unlock()
+	mgr.notifyStatus(disconnectingStatus)
+	mgr.notifyStatus(disconnectedStatus)
 	return ""
 }
 
@@ -268,9 +282,11 @@ func (m *tunnelManager) runAWGTunnel(config ConnectConfig, readyCh chan<- string
 
 	if config.AWG == nil {
 		errMsg := "awg config is required for amneziawg protocol"
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
 		m.mu.Lock()
-		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.setStatus(errStatus)
 		m.mu.Unlock()
+		m.notifyStatus(errStatus)
 		readyCh <- errMsg
 		return
 	}
@@ -295,13 +311,15 @@ func (m *tunnelManager) runAWGTunnel(config ConnectConfig, readyCh chan<- string
 	m.stats = NewTrafficStats()
 	stopCh := m.stopCh
 
-	m.setStatus(TunnelStatus{
+	connectedStatus := TunnelStatus{
 		State:       StateConnected,
 		ServerAddr:  serverAddr,
 		Protocol:    protocol,
 		ConnectedAt: m.connectedAt.Unix(),
-	})
+	}
+	m.setStatus(connectedStatus)
 	m.mu.Unlock()
+	m.notifyStatus(connectedStatus)
 
 	// Signal to the native module that it can now call StartTunAWG().
 	readyCh <- ""
@@ -335,9 +353,11 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	jsonConfig, err := json.Marshal(xrayConfig)
 	if err != nil {
 		errMsg := fmt.Sprintf("config error: %v", err)
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
 		m.mu.Lock()
-		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.setStatus(errStatus)
 		m.mu.Unlock()
+		m.notifyStatus(errStatus)
 		readyCh <- errMsg
 		return
 	}
@@ -357,9 +377,11 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	}
 	if err != nil {
 		errMsg := fmt.Sprintf("load config error: %v", err)
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
 		m.mu.Lock()
-		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.setStatus(errStatus)
 		m.mu.Unlock()
+		m.notifyStatus(errStatus)
 		readyCh <- errMsg
 		return
 	}
@@ -367,9 +389,11 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	xrayInst, err := core.New(pbConfig)
 	if err != nil {
 		errMsg := fmt.Sprintf("xray init error: %v", err)
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
 		m.mu.Lock()
-		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.setStatus(errStatus)
 		m.mu.Unlock()
+		m.notifyStatus(errStatus)
 		readyCh <- errMsg
 		return
 	}
@@ -377,9 +401,11 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	// Start the local SOCKS5 proxy (XRay-core listens on localhost:10808)
 	if err := xrayInst.Start(); err != nil {
 		errMsg := fmt.Sprintf("xray start error: %v", err)
+		errStatus := TunnelStatus{State: StateError, Error: errMsg}
 		m.mu.Lock()
-		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.setStatus(errStatus)
 		m.mu.Unlock()
+		m.notifyStatus(errStatus)
 		readyCh <- errMsg
 		return
 	}
@@ -400,13 +426,15 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	m.stats = NewTrafficStats()
 	stopCh := m.stopCh // capture under lock to avoid race
 
-	m.setStatus(TunnelStatus{
+	connectedStatus := TunnelStatus{
 		State:       StateConnected,
 		ServerAddr:  serverAddr,
 		Protocol:    protocol,
 		ConnectedAt: m.connectedAt.Unix(),
-	})
+	}
+	m.setStatus(connectedStatus)
 	m.mu.Unlock()
+	m.notifyStatus(connectedStatus)
 
 	// Signal that xray-core is ready — the SOCKS5 proxy is now accepting connections
 	readyCh <- ""
@@ -415,17 +443,21 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	<-stopCh
 }
 
-// setStatus updates the tunnel status and notifies the callback.
-// Must be called with m.mu held. The callback is invoked outside the lock
-// to prevent deadlocks when the callback calls back into Go.
+// setStatus updates m.status. Must be called with m.mu held.
+// It does NOT invoke the callback — call notifyStatus after releasing the lock.
 func (m *tunnelManager) setStatus(status TunnelStatus) {
 	m.status = status
+}
+
+// notifyStatus marshals status and fires the callback WITHOUT holding the lock.
+// Call this after releasing m.mu to avoid deadlocks when the callback calls
+// back into Go (e.g. GetStatus).
+func (m *tunnelManager) notifyStatus(status TunnelStatus) {
+	m.mu.Lock()
 	cb := m.callback
+	m.mu.Unlock()
 	if cb != nil {
 		data, _ := json.Marshal(status)
-		statusJSON := string(data)
-		m.mu.Unlock()
-		cb.OnStatusChanged(statusJSON)
-		m.mu.Lock()
+		cb.OnStatusChanged(string(data))
 	}
 }

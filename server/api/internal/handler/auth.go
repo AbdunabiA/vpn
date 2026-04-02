@@ -86,14 +86,28 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 			})
 		}
 
-		// Create default free subscription
+		// Create default free subscription.
+		// If this fails we must roll back the user record so registration is
+		// atomic — a user without a subscription would be unusable.
 		sub := model.Subscription{
 			UserID:   user.ID,
 			Plan:     "free",
 			IsActive: true,
 		}
 		if err := repository.CreateSubscription(db, &sub); err != nil {
-			logger.Error("failed to create subscription", zap.Error(err))
+			logger.Error("failed to create subscription — rolling back user creation",
+				zap.String("user_id", user.ID),
+				zap.Error(err),
+			)
+			if deleteErr := repository.DeleteUser(db, user.ID); deleteErr != nil {
+				logger.Error("failed to roll back user after subscription creation failure",
+					zap.String("user_id", user.ID),
+					zap.Error(deleteErr),
+				)
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
 		}
 
 		// Generate JWT tokens — new users always start with role "user"

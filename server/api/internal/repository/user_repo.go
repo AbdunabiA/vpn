@@ -47,6 +47,14 @@ func FindUserByID(db *gorm.DB, id string) (*model.User, error) {
 	return &user, nil
 }
 
+// DeleteUser permanently removes a user record by UUID.
+// Used to roll back user creation when a subsequent operation (e.g. creating
+// the default subscription) fails and the registration must be treated as atomic.
+func DeleteUser(db *gorm.DB, userID string) error {
+	result := db.Delete(&model.User{}, "id = ?", userID)
+	return result.Error
+}
+
 // UpdateUserTier sets the subscription_tier on the users row identified by id.
 func UpdateUserTier(db *gorm.DB, userID, tier string) error {
 	result := db.Model(&model.User{}).

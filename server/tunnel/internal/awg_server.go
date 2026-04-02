@@ -2,13 +2,21 @@ package internal
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
 )
+
+// AWGPeer represents a WireGuard peer (client) allowed to connect to the server.
+type AWGPeer struct {
+	// PublicKey is the client's Base64-encoded X25519 public key.
+	PublicKey string `json:"public_key"`
+	// AllowedIPs is the IP range routed to/from this peer, e.g. "10.8.0.2/32".
+	AllowedIPs string `json:"allowed_ips"`
+}
 
 // AWGServerConfig holds the AmneziaWG server-side configuration.
 // It is populated from the "awg" section of config.json.
@@ -40,6 +48,11 @@ type AWGServerConfig struct {
 	H2   int `json:"h2"`
 	H3   int `json:"h3"`
 	H4   int `json:"h4"`
+
+	// Peers is the list of allowed clients.
+	// Each peer must have a unique public key and an assigned AllowedIPs range.
+	// Without at least one peer, no client can establish a WireGuard session.
+	Peers []AWGPeer `json:"peers"`
 }
 
 // AWGServer manages the lifecycle of the AmneziaWG server interface.
@@ -187,8 +200,10 @@ func (s *AWGServer) destroyInterface() error {
 }
 
 // applyWGConfig writes a wg(8)-compatible configuration and pipes it through
-// `wg setconf`.  The AmneziaWG obfuscation parameters are written as
+// `wg setconf`. The AmneziaWG obfuscation parameters are written as
 // Interface-level keys that the amneziawg-patched wg(8) understands.
+// Each entry in Peers is appended as a [Peer] section so that clients can
+// actually establish WireGuard sessions with the server.
 func (s *AWGServer) applyWGConfig() error {
 	cfg := fmt.Sprintf(
 		"[Interface]\n"+
@@ -216,9 +231,19 @@ func (s *AWGServer) applyWGConfig() error {
 		s.config.H4,
 	)
 
+	// Append a [Peer] section for every configured client.
+	// Without these sections the WireGuard interface accepts no incoming handshakes.
+	for _, peer := range s.config.Peers {
+		cfg += fmt.Sprintf(
+			"\n[Peer]\nPublicKey = %s\nAllowedIPs = %s\n",
+			peer.PublicKey,
+			peer.AllowedIPs,
+		)
+	}
+
 	// wg setconf reads from stdin.
 	cmd := exec.Command("wg", "setconf", s.ifaceName, "/dev/stdin")
-	cmd.Stdin = newStringReader(cfg)
+	cmd.Stdin = strings.NewReader(cfg)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("wg setconf: %w (output: %s)", err, string(out))
 	}
@@ -252,23 +277,3 @@ func runCmd(name string, args ...string) error {
 	return nil
 }
 
-// newStringReader wraps a string in an io.Reader — avoids importing strings
-// package just for strings.NewReader (it is already available, but keeping
-// this explicit makes the dependency clear).
-func newStringReader(s string) *stringReader {
-	return &stringReader{data: []byte(s)}
-}
-
-type stringReader struct {
-	data []byte
-	pos  int
-}
-
-func (r *stringReader) Read(p []byte) (n int, err error) {
-	if r.pos >= len(r.data) {
-		return 0, io.EOF
-	}
-	n = copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
-}

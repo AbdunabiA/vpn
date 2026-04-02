@@ -224,9 +224,20 @@ class VpnManager: NSObject {
     }
 
     private func stateToJSON(_ state: String) -> String {
-        return """
-        {"state":"\(state)","server_addr":"","protocol":"vless-reality","connected_at":0,"bytes_up":0,"bytes_down":0}
-        """
+        let dict: [String: Any] = [
+            "state": state,
+            "server_addr": "",
+            "protocol": "vless-reality",
+            "connected_at": 0,
+            "bytes_up": 0,
+            "bytes_down": 0
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8) else {
+            // Fallback: return a safe minimal JSON — should never happen with a static dict.
+            return #"{"state":"disconnected","server_addr":"","protocol":"vless-reality","connected_at":0,"bytes_up":0,"bytes_down":0}"#
+        }
+        return json
     }
 
     deinit {

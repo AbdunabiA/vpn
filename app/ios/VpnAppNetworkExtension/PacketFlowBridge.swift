@@ -92,7 +92,15 @@ class PacketFlowBridge {
             for packet in packets {
                 packet.withUnsafeBytes { ptr in
                     guard let base = ptr.baseAddress else { return }
-                    Darwin.write(self.swiftFD, base, packet.count)
+                    let written = Darwin.write(self.swiftFD, base, packet.count)
+                    if written < 0 {
+                        let err = errno
+                        // EAGAIN is expected when the socket buffer is full — not an error.
+                        if err != EAGAIN {
+                            os_log("PacketFlowBridge: write to Go fd failed: errno=%{public}d",
+                                   log: self.log, type: .error, err)
+                        }
+                    }
                 }
             }
 

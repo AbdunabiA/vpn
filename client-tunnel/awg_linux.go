@@ -61,7 +61,15 @@ func startAWGTunnel(fd int, cfg AWGConfig) error {
 	}
 
 	// Apply config through the UAPI IPC reader.
-	if err := dev.IpcSetOperation(ipc.StringToReader(uapiCfg)); err != nil {
+	// The UAPI config string contains the private key — zero it from memory
+	// immediately after use to limit the window during which it is recoverable.
+	uapiBytes := []byte(uapiCfg)
+	defer func() {
+		for i := range uapiBytes {
+			uapiBytes[i] = 0
+		}
+	}()
+	if err := dev.IpcSetOperation(ipc.StringToReader(string(uapiBytes))); err != nil {
 		dev.Close()
 		return fmt.Errorf("awg: ipc set operation: %w", err)
 	}
