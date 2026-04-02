@@ -79,8 +79,10 @@ export function RootNavigator() {
 function SettingsButton({onPress}: {onPress: () => void}) {
   return (
     <TouchableOpacity onPress={onPress} style={navStyles.headerBtn}>
-      <View style={navStyles.gearIcon}>
-        <Text style={navStyles.gearText}>{'  \u2699'}</Text>
+      <View style={navStyles.settingsCircle}>
+        <View style={navStyles.settingsInner}>
+          <Text style={navStyles.settingsIcon}>{'⚙'}</Text>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -103,15 +105,23 @@ const navStyles = StyleSheet.create({
   headerBtn: {
     padding: spacing.sm,
   },
-  gearIcon: {
+  settingsCircle: {
     width: 28,
     height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: colors.textSecondary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  gearText: {
-    fontSize: 22,
+  settingsInner: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsIcon: {
+    fontSize: 16,
     color: colors.textSecondary,
+    lineHeight: 18,
   },
   avatarCircle: {
     width: 28,
