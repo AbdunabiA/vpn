@@ -32,3 +32,10 @@ target 'VpnApp' do
     )
   end
 end
+
+# Network Extension target — runs the Go tunnel in a separate process.
+# Does NOT need React Native pods, only system frameworks + Go tunnel.
+target 'VpnAppNetworkExtension' do
+  # Tunnel.xcframework is added via Xcode (not CocoaPods) since it's a pre-built binary.
+  # No pods needed here — the extension only uses NetworkExtension.framework + Tunnel.
+end

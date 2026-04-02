@@ -27,6 +27,16 @@ type ProbeResult struct {
 // serversJSON: JSON array of server objects with "address" and "port" fields
 // Returns: JSON array of ProbeResult objects
 func ProbeServers(serversJSON string) string {
+	// Probes make direct TCP connections that bypass the tunnel.
+	// Block probing while connected to prevent real IP leaks.
+	mgr := getManager()
+	mgr.mu.Lock()
+	state := mgr.status.State
+	mgr.mu.Unlock()
+	if state == StateConnected || state == StateConnecting {
+		return `[{"error": "cannot probe while VPN is active — probes bypass the tunnel"}]`
+	}
+
 	type serverEntry struct {
 		Address string `json:"address"`
 		Port    int    `json:"port"`

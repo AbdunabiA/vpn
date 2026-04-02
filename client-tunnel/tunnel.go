@@ -4,8 +4,9 @@
 //   - iOS: Tunnel.xcframework
 //
 // Build commands:
-//   gomobile bind -target=android -o tunnel.aar ./
-//   gomobile bind -target=ios -o Tunnel.xcframework ./
+//
+//	gomobile bind -target=android -o tunnel.aar ./
+//	gomobile bind -target=ios -o Tunnel.xcframework ./
 //
 // The React Native native modules (TurboModules) call these functions
 // to control the VPN tunnel lifecycle.
@@ -30,6 +31,9 @@ import (
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
 	_ "github.com/xtls/xray-core/infra/conf/serial"
 )
+
+// localSocksPort is the port xray-core SOCKS5 proxy listens on.
+const localSocksPort = 10808
 
 // Connection states exposed to the mobile app via TurboModule events.
 const (
@@ -85,6 +89,7 @@ type tunnelManager struct {
 	status       TunnelStatus
 	callback     StatusCallback
 	xrayInstance *core.Instance
+	stats        *TrafficStats
 	stopCh       chan struct{}
 	connectedAt  time.Time
 }
@@ -107,49 +112,77 @@ func SetStatusCallback(cb StatusCallback) {
 }
 
 // Connect establishes a VPN tunnel using the provided configuration JSON.
+// Blocks until the SOCKS5 proxy is listening or an error occurs.
 // The configJSON parameter is a JSON-serialized ConnectConfig.
 // Returns an error string (empty on success).
 func Connect(configJSON string) string {
 	mgr := getManager()
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
 
 	if mgr.status.State == StateConnected || mgr.status.State == StateConnecting {
+		mgr.mu.Unlock()
 		return "already connected or connecting"
 	}
 
 	var config ConnectConfig
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
-		mgr.updateStatus(TunnelStatus{
+		mgr.setStatus(TunnelStatus{
 			State: StateError,
 			Error: fmt.Sprintf("invalid config: %v", err),
 		})
+		mgr.mu.Unlock()
 		return fmt.Sprintf("invalid config: %v", err)
 	}
 
-	mgr.updateStatus(TunnelStatus{
+	// Validate required fields
+	if config.ServerAddress == "" {
+		errMsg := "server_address is required"
+		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		mgr.mu.Unlock()
+		return errMsg
+	}
+	if config.ServerPort <= 0 || config.ServerPort > 65535 {
+		errMsg := "invalid server_port"
+		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		mgr.mu.Unlock()
+		return errMsg
+	}
+	if config.UserID == "" {
+		errMsg := "user_id is required"
+		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		mgr.mu.Unlock()
+		return errMsg
+	}
+
+	mgr.setStatus(TunnelStatus{
 		State:      StateConnecting,
 		ServerAddr: fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort),
 		Protocol:   config.Protocol,
 	})
 
 	mgr.stopCh = make(chan struct{})
-	go mgr.runTunnel(config)
 
-	return ""
+	// readyCh: runTunnel sends "" on success, or an error message on failure.
+	// Connect blocks on this so the caller knows xray is ready before proceeding.
+	readyCh := make(chan string, 1)
+	go mgr.runTunnel(config, readyCh)
+	mgr.mu.Unlock()
+
+	// Block until xray-core is ready or errored
+	return <-readyCh
 }
 
 // Disconnect tears down the active VPN tunnel.
 func Disconnect() string {
 	mgr := getManager()
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
 
 	if mgr.status.State == StateDisconnected {
+		mgr.mu.Unlock()
 		return ""
 	}
 
-	mgr.updateStatus(TunnelStatus{State: StateDisconnecting})
+	mgr.setStatus(TunnelStatus{State: StateDisconnecting})
 
 	// Close XRay-core instance
 	if mgr.xrayInstance != nil {
@@ -157,12 +190,17 @@ func Disconnect() string {
 		mgr.xrayInstance = nil
 	}
 
+	// Clear stats and SOCKS auth credentials
+	mgr.stats = nil
+	resetSocksAuth()
+
 	if mgr.stopCh != nil {
 		close(mgr.stopCh)
 		mgr.stopCh = nil
 	}
 
-	mgr.updateStatus(TunnelStatus{State: StateDisconnected})
+	mgr.setStatus(TunnelStatus{State: StateDisconnected})
+	mgr.mu.Unlock()
 	return ""
 }
 
@@ -177,78 +215,109 @@ func GetStatus() string {
 }
 
 // runTunnel establishes the VPN connection via XRay-core.
-func (m *tunnelManager) runTunnel(config ConnectConfig) {
+// Sends "" to readyCh on success, or an error string on failure.
+func (m *tunnelManager) runTunnel(config ConnectConfig, readyCh chan<- string) {
+	// Capture non-sensitive metadata before clearing config
+	serverAddr := fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort)
+	protocol := config.Protocol
+
 	// Build XRay-core client configuration for VLESS+REALITY
 	xrayConfig := buildClientXRayConfig(config)
 
 	jsonConfig, err := json.Marshal(xrayConfig)
 	if err != nil {
+		errMsg := fmt.Sprintf("config error: %v", err)
 		m.mu.Lock()
-		m.updateStatus(TunnelStatus{
-			State: StateError,
-			Error: fmt.Sprintf("config error: %v", err),
-		})
+		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
 		m.mu.Unlock()
+		readyCh <- errMsg
 		return
 	}
 
+	// Clear sensitive config from memory (defense-in-depth: UserID, keys)
+	config = ConnectConfig{}
+	xrayConfig = nil
+
+	// Register Android socket protection (once) before creating xray instance
+	registerDialerController()
+
 	// Load and create XRay-core instance
 	pbConfig, err := core.LoadConfig("json", bytes.NewReader(jsonConfig))
+	// Zero the JSON config buffer (contains credentials)
+	for i := range jsonConfig {
+		jsonConfig[i] = 0
+	}
 	if err != nil {
+		errMsg := fmt.Sprintf("load config error: %v", err)
 		m.mu.Lock()
-		m.updateStatus(TunnelStatus{
-			State: StateError,
-			Error: fmt.Sprintf("load config error: %v", err),
-		})
+		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
 		m.mu.Unlock()
+		readyCh <- errMsg
 		return
 	}
 
 	xrayInst, err := core.New(pbConfig)
 	if err != nil {
+		errMsg := fmt.Sprintf("xray init error: %v", err)
 		m.mu.Lock()
-		m.updateStatus(TunnelStatus{
-			State: StateError,
-			Error: fmt.Sprintf("xray init error: %v", err),
-		})
+		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
 		m.mu.Unlock()
+		readyCh <- errMsg
 		return
 	}
 
 	// Start the local SOCKS5 proxy (XRay-core listens on localhost:10808)
 	if err := xrayInst.Start(); err != nil {
+		errMsg := fmt.Sprintf("xray start error: %v", err)
 		m.mu.Lock()
-		m.updateStatus(TunnelStatus{
-			State: StateError,
-			Error: fmt.Sprintf("xray start error: %v", err),
-		})
+		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
 		m.mu.Unlock()
+		readyCh <- errMsg
 		return
 	}
 
-	// Connected successfully
+	// Connected successfully — acquire lock, store instance, capture stopCh
 	m.mu.Lock()
+
+	// Check if Disconnect() was called while we were starting
+	if m.stopCh == nil {
+		xrayInst.Close()
+		m.mu.Unlock()
+		readyCh <- "disconnected during connect"
+		return
+	}
+
 	m.xrayInstance = xrayInst
 	m.connectedAt = time.Now()
-	m.updateStatus(TunnelStatus{
+	m.stats = NewTrafficStats()
+	stopCh := m.stopCh // capture under lock to avoid race
+
+	m.setStatus(TunnelStatus{
 		State:       StateConnected,
-		ServerAddr:  fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort),
-		Protocol:    config.Protocol,
+		ServerAddr:  serverAddr,
+		Protocol:    protocol,
 		ConnectedAt: m.connectedAt.Unix(),
 	})
 	m.mu.Unlock()
 
+	// Signal that xray-core is ready — the SOCKS5 proxy is now accepting connections
+	readyCh <- ""
+
 	// Wait for disconnect signal
-	<-m.stopCh
+	<-stopCh
 }
 
-// updateStatus updates the tunnel status and notifies the callback.
-// Must be called with m.mu held.
-func (m *tunnelManager) updateStatus(status TunnelStatus) {
+// setStatus updates the tunnel status and notifies the callback.
+// Must be called with m.mu held. The callback is invoked outside the lock
+// to prevent deadlocks when the callback calls back into Go.
+func (m *tunnelManager) setStatus(status TunnelStatus) {
 	m.status = status
-
-	if m.callback != nil {
+	cb := m.callback
+	if cb != nil {
 		data, _ := json.Marshal(status)
-		m.callback.OnStatusChanged(string(data))
+		statusJSON := string(data)
+		m.mu.Unlock()
+		cb.OnStatusChanged(statusJSON)
+		m.mu.Lock()
 	}
 }

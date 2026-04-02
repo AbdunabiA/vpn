@@ -67,7 +67,12 @@ func (s *TrafficStats) Snapshot() string {
 func GetTrafficStats() string {
 	mgr := getManager()
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
+	stats := mgr.stats
+	mgr.mu.Unlock()
+
+	if stats != nil {
+		return stats.Snapshot()
+	}
 
 	// Return zeros when not connected
 	snap := StatsSnapshot{}
