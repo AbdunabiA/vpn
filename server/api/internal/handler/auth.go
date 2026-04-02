@@ -21,6 +21,7 @@ import (
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Name     string `json:"name"`
 }
 
 type loginRequest struct {
@@ -51,6 +52,12 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 			})
 		}
 
+		if len(req.Name) < 2 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "name must be at least 2 characters",
+			})
+		}
+
 		if !strings.Contains(req.Email, "@") || len(req.Email) < 5 || len(req.Email) > 255 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "invalid email format",
@@ -73,6 +80,7 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 		user := model.User{
 			EmailHash:    emailHash,
 			PasswordHash: string(passwordHash),
+			FullName:     req.Name,
 		}
 		if err := repository.CreateUser(db, &user); err != nil {
 			if errors.Is(err, repository.ErrDuplicate) {
@@ -111,7 +119,7 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 		}
 
 		// Generate JWT tokens — new users always start with role "user"
-		tokens, err := generateTokens(user.ID, "free", "user", cfg.JWTSecret)
+		tokens, err := generateTokens(user.ID, "free", "user", user.FullName, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -178,7 +186,7 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 		}
 
 		// Generate tokens with real user ID, tier, and role
-		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, cfg.JWTSecret)
+		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, user.FullName, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -239,7 +247,7 @@ func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Han
 		}
 
 		// Generate new token pair with current role
-		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, cfg.JWTSecret)
+		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, user.FullName, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -271,7 +279,9 @@ func storeRefreshSession(db *gorm.DB, userID, refreshToken string) error {
 
 // generateTokens creates a JWT access token (15 min) and refresh token (30 days).
 // The role claim is embedded in the access token for admin middleware checks.
-func generateTokens(userID, tier, role, secret string) (*authResponse, error) {
+// The name claim carries the user's display name so the app can show it without
+// a separate /account call immediately after login/register.
+func generateTokens(userID, tier, role, name, secret string) (*authResponse, error) {
 	now := time.Now()
 	accessExpiry := now.Add(15 * time.Minute)
 
@@ -279,6 +289,7 @@ func generateTokens(userID, tier, role, secret string) (*authResponse, error) {
 		"sub":  userID,
 		"tier": tier,
 		"role": role,
+		"name": name,
 		"iat":  now.Unix(),
 		"exp":  accessExpiry.Unix(),
 	}

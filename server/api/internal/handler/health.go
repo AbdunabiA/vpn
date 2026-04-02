@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"runtime"
+	"strings"
 	"time"
 
 	"vpnapp/server/api/internal/model"
@@ -88,9 +89,63 @@ func GetAccount(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		return c.JSON(fiber.Map{
 			"data": fiber.Map{
 				"id":                      user.ID,
+				"full_name":               user.FullName,
 				"subscription_tier":       user.SubscriptionTier,
 				"subscription_expires_at": user.SubscriptionExpiresAt,
 				"created_at":              user.CreatedAt,
+			},
+		})
+	}
+}
+
+// patchAccountRequest defines the fields a user may update on their own account.
+type patchAccountRequest struct {
+	Name string `json:"name"`
+}
+
+// PatchAccount handles PATCH /account.
+// Updates the authenticated user's profile (currently: full_name only).
+func PatchAccount(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := c.Locals("user_id").(string)
+
+		var req patchAccountRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "invalid request body",
+			})
+		}
+
+		name := strings.TrimSpace(req.Name)
+		if len(name) < 2 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "name must be at least 2 characters",
+			})
+		}
+		if len(name) > 255 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "name must not exceed 255 characters",
+			})
+		}
+
+		if err := repository.UpdateUserName(db, userID, name); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "user not found",
+				})
+			}
+			logger.Error("failed to update user name", zap.String("user_id", userID), zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		logger.Info("user updated name", zap.String("user_id", userID))
+
+		return c.JSON(fiber.Map{
+			"data": fiber.Map{
+				"id":        userID,
+				"full_name": name,
 			},
 		})
 	}

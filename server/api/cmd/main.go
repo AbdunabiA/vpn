@@ -91,6 +91,7 @@ func main() {
 	protected.Get("/servers/:id/config", handler.GetServerConfig(logger, db))
 	protected.Get("/subscription", handler.GetSubscription(logger, db))
 	protected.Get("/account", handler.GetAccount(logger, db))
+	protected.Patch("/account", handler.PatchAccount(logger, db))
 	protected.Post("/connections", handler.RegisterConnection(logger, db))
 	protected.Delete("/connections/:id", handler.UnregisterConnection(logger, db))
 	protected.Get("/connections", handler.ListActiveConnections(logger, db))
