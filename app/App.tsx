@@ -6,6 +6,7 @@ import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
 
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useAuthStore} from './src/stores/authStore';
+import {ErrorBoundary} from './src/components/ErrorBoundary';
 import {colors} from './src/theme';
 
 // Import i18n to initialize translations
@@ -45,14 +46,16 @@ function App(): React.JSX.Element {
   }, []);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <SafeAreaProvider>
-        <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-        <NavigationContainer theme={navTheme}>
-          <RootNavigator />
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <SafeAreaProvider>
+          <StatusBar barStyle="light-content" backgroundColor={colors.background} />
+          <NavigationContainer theme={navTheme}>
+            <RootNavigator />
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

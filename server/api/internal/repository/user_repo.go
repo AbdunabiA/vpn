@@ -46,3 +46,17 @@ func FindUserByID(db *gorm.DB, id string) (*model.User, error) {
 	}
 	return &user, nil
 }
+
+// UpdateUserTier sets the subscription_tier on the users row identified by id.
+func UpdateUserTier(db *gorm.DB, userID, tier string) error {
+	result := db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("subscription_tier", tier)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

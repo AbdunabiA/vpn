@@ -47,10 +47,12 @@ export function SettingsScreen() {
     killSwitch,
     splitTunneling,
     dnsOverHttps,
+    autoReconnect,
     setProtocol,
     setKillSwitch,
     setSplitTunneling,
     setDnsOverHttps,
+    setAutoReconnect,
   } = useSettingsStore();
 
   return (
@@ -113,6 +115,19 @@ export function SettingsScreen() {
               <Switch
                 value={dnsOverHttps}
                 onValueChange={setDnsOverHttps}
+                trackColor={{true: colors.primary, false: colors.surfaceLight}}
+                thumbColor={colors.textPrimary}
+              />
+            }
+          />
+          <View style={styles.separator} />
+          <SettingRow
+            label={t('settings.autoReconnect')}
+            description={t('settings.autoReconnectDesc')}
+            right={
+              <Switch
+                value={autoReconnect}
+                onValueChange={setAutoReconnect}
                 trackColor={{true: colors.primary, false: colors.surfaceLight}}
                 thumbColor={colors.textPrimary}
               />
