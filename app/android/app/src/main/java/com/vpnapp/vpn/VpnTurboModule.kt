@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.VpnService
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import tunnel.Tunnel
 
 /**
  * React Native TurboModule that bridges JavaScript to the Android VPN service.
@@ -122,10 +123,7 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
      */
     @ReactMethod
     fun getStatus(promise: Promise) {
-        val service = TunnelVpnService.instance
-        val isActive = service?.isActive() ?: false
-        val state = if (isActive) "connected" else "disconnected"
-        promise.resolve("""{"state":"$state","server_addr":"","protocol":"vless-reality","connected_at":0,"bytes_up":0,"bytes_down":0}""")
+        promise.resolve(Tunnel.getStatus())
     }
 
     /**
@@ -133,10 +131,15 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
      */
     @ReactMethod
     fun probeServers(serversJSON: String, promise: Promise) {
-        // When Go tunnel .aar is integrated:
-        //   val result = Tunnel.probeServers(serversJSON)
-        //   promise.resolve(result)
-        promise.resolve("[]")
+        // Run on background thread — probing involves network I/O
+        Thread {
+            try {
+                val result = Tunnel.probeServers(serversJSON)
+                promise.resolve(result)
+            } catch (e: Exception) {
+                promise.reject("PROBE_ERROR", e.message, e)
+            }
+        }.start()
     }
 
     /**
@@ -144,10 +147,7 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
      */
     @ReactMethod
     fun getTrafficStats(promise: Promise) {
-        // When Go tunnel .aar is integrated:
-        //   val result = Tunnel.getTrafficStats()
-        //   promise.resolve(result)
-        promise.resolve("""{"bytes_up":0,"bytes_down":0,"speed_up_bps":0,"speed_down_bps":0,"duration_secs":0}""")
+        promise.resolve(Tunnel.getTrafficStats())
     }
 
     private fun startService(configJson: String) {

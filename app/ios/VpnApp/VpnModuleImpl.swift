@@ -1,9 +1,15 @@
 import Foundation
 import React
+import Tunnel
 
 /// Swift implementation of the VPN React Native module for iOS.
 /// Bridges React Native JS calls to VpnManager which controls the
-/// NETunnelProviderManager → PacketTunnelProvider → Go tunnel chain.
+/// NETunnelProviderManager -> PacketTunnelProvider -> Go tunnel chain.
+///
+/// Note: The Go tunnel lifecycle (Connect/Disconnect/StartTun/StopTun) runs
+/// inside the Network Extension process. The main app communicates via IPC
+/// (sendProviderMessage). Only ProbeServers runs directly in the main app
+/// since it's just TCP probing — no xray-core needed.
 @objc(VpnModule)
 class VpnModuleImpl: RCTEventEmitter {
 
@@ -61,26 +67,30 @@ class VpnModuleImpl: RCTEventEmitter {
 
     @objc func getStatus(_ resolve: @escaping RCTPromiseResolveBlock,
                          reject: @escaping RCTPromiseRejectBlock) {
-        resolve(VpnManager.shared.getStatus())
+        // Try IPC to get live status from the Network Extension
+        VpnManager.shared.sendMessage("status") { response in
+            resolve(response ?? VpnManager.shared.getStatus())
+        }
     }
 
     @objc func probeServers(_ serversJSON: String,
                             resolve: @escaping RCTPromiseResolveBlock,
                             reject: @escaping RCTPromiseRejectBlock) {
-        // When Go tunnel .xcframework is integrated:
-        //   let result = TunnelProbeServers(serversJSON)
-        //   resolve(result)
-        resolve("[]")
+        // ProbeServers runs in the main app — it's just TCP probing, no tunnel needed
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = TunnelProbeServers(serversJSON)
+            resolve(result)
+        }
     }
 
     @objc func getTrafficStats(_ resolve: @escaping RCTPromiseResolveBlock,
                                reject: @escaping RCTPromiseRejectBlock) {
-        // When Go tunnel .xcframework is integrated:
-        //   let result = TunnelGetTrafficStats()
-        //   resolve(result)
-        resolve("""
-        {"bytes_up":0,"bytes_down":0,"speed_up_bps":0,"speed_down_bps":0,"duration_secs":0}
-        """)
+        // Get live stats from the Network Extension via IPC
+        VpnManager.shared.sendMessage("stats") { response in
+            resolve(response ?? """
+            {"bytes_up":0,"bytes_down":0,"speed_up_bps":0,"speed_down_bps":0,"duration_secs":0}
+            """)
+        }
     }
 
     // MARK: - Private

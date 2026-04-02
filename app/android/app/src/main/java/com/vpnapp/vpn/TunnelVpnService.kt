@@ -8,20 +8,21 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import org.json.JSONObject
+import tunnel.Tunnel
+import tunnel.ProtectSocket
+import tunnel.StatusCallback
 
 /**
- * Android VpnService that manages the VPN tunnel.
- *
- * When the Go tunnel library (.aar compiled via gomobile) is integrated,
- * this service loads the Go tunnel and routes device traffic through it.
+ * Android VpnService that manages the VPN tunnel via the Go tunnel library.
  *
  * Flow:
  *   React Native -> VpnTurboModule -> TunnelVpnService -> Go tunnel (xray-core)
  *
  * The Go tunnel opens a local SOCKS5 proxy on localhost:10808.
- * This service creates a TUN interface and routes traffic to that proxy.
+ * tun2socks bridges the TUN interface to that SOCKS5 proxy.
  */
-class TunnelVpnService : VpnService() {
+class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var isRunning = false
@@ -37,6 +38,30 @@ class TunnelVpnService : VpnService() {
         // Singleton reference for the TurboModule to interact with
         var instance: TunnelVpnService? = null
             private set
+    }
+
+    // --- ProtectSocket interface (gomobile generated) ---
+    // Prevents the tunnel's own sockets from being routed through the VPN.
+    override fun protect(fd: Long): Boolean {
+        return (this as VpnService).protect(fd.toInt())
+    }
+
+    // --- StatusCallback interface (gomobile generated) ---
+    // Receives tunnel state changes from the Go library.
+    override fun onStatusChanged(statusJSON: String?) {
+        statusJSON?.let { json ->
+            VpnTurboModule.sendStatusEvent(json)
+            // Update notification based on parsed state
+            try {
+                val state = JSONObject(json).optString("state", "")
+                when (state) {
+                    "connected" -> updateNotification("Connected")
+                    "connecting" -> updateNotification("Connecting...")
+                    "disconnecting" -> updateNotification("Disconnecting...")
+                    "error" -> updateNotification("Error")
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     override fun onCreate() {
@@ -65,83 +90,95 @@ class TunnelVpnService : VpnService() {
     }
 
     /**
-     * Starts the VPN tunnel.
-     *
-     * 1. Creates a TUN interface via VpnService.Builder
-     * 2. Starts the Go tunnel library with the provided config
-     * 3. The Go tunnel connects to the remote VLESS+REALITY server
-     * 4. Device traffic flows: App -> TUN -> Go tunnel -> Remote server
+     * Starts the VPN tunnel:
+     * 1. Register socket protection (prevents routing loop)
+     * 2. Start Go tunnel (xray-core SOCKS5 proxy on localhost:10808)
+     * 3. Create TUN interface
+     * 4. Start tun2socks (bridges TUN <-> SOCKS5)
      */
     private fun startVpn(configJson: String) {
         if (isRunning) return
 
         Log.i(TAG, "Starting VPN tunnel")
-
-        // Start as foreground service (required for Android 8+)
         startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
 
         try {
-            // Create the VPN TUN interface
+            // 1. Register socket protection BEFORE connecting
+            Tunnel.setProtectCallback(this)
+
+            // 2. Register status callback
+            Tunnel.setStatusCallback(this)
+
+            // 3. Start the Go tunnel (xray-core SOCKS5 proxy)
+            val connectResult = Tunnel.connect(configJson)
+            if (connectResult.isNotEmpty()) {
+                Log.e(TAG, "Tunnel connect error: $connectResult")
+                VpnTurboModule.sendStatusEvent(JSONObject().put("state", "error").put("error", connectResult).toString())
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return
+            }
+
+            // 4. Create TUN interface AFTER xray starts (so its sockets are already protected)
             val builder = Builder()
                 .setSession("VPN App")
-                .addAddress("10.0.0.2", 32)           // VPN client IP
-                .addRoute("0.0.0.0", 0)               // Route all IPv4 traffic
-                .addDnsServer("1.1.1.1")               // Cloudflare DNS
-                .addDnsServer("8.8.8.8")               // Google DNS backup
+                .addAddress("10.0.0.2", 32)           // IPv4 tunnel address
+                .addRoute("0.0.0.0", 0)               // Route all IPv4
+                .addAddress("fd00::2", 128)            // IPv6 tunnel address
+                .addRoute("::", 0)                     // Route all IPv6 (prevents IPv6 leak)
+                .addDnsServer("1.1.1.1")
+                .addDnsServer("8.8.8.8")
                 .setMtu(1500)
-                .setBlocking(true)
-
-            // Protect the tunnel socket from being routed through VPN (prevents loop)
-            // When Go tunnel is integrated:
-            //   builder.protect(goTunnelSocketFd)
+                .setBlocking(false)
 
             vpnInterface = builder.establish()
 
             if (vpnInterface == null) {
                 Log.e(TAG, "Failed to establish VPN interface")
+                Tunnel.disconnect()
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return
             }
 
-            // --- Go tunnel integration point ---
-            // When the .aar is integrated:
-            //
-            //   import tunnel.Tunnel  // gomobile generated
-            //
-            //   // Pass the TUN file descriptor to the Go tunnel
-            //   val tunFd = vpnInterface!!.fd
-            //   val result = Tunnel.connect(configJson)
-            //   if (result.isNotEmpty()) {
-            //       Log.e(TAG, "Tunnel connect error: $result")
-            //       stopVpn()
-            //       return
-            //   }
-            //
-            // For now, the VPN interface is established but traffic isn't tunneled yet.
+            // 5. Start tun2socks: pipes TUN packets to SOCKS5 proxy
+            val tunFd = vpnInterface!!.fd
+            val tunResult = Tunnel.startTun(tunFd.toLong())
+            if (tunResult.isNotEmpty()) {
+                Log.e(TAG, "tun2socks error: $tunResult")
+                Tunnel.disconnect()
+                vpnInterface?.close()
+                vpnInterface = null
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return
+            }
 
             isRunning = true
             updateNotification("Connected")
-            VpnTurboModule.sendStatusEvent("""{"state":"connected","server_addr":"","protocol":"vless-reality","connected_at":${System.currentTimeMillis() / 1000},"bytes_up":0,"bytes_down":0}""")
-
             Log.i(TAG, "VPN tunnel established")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN", e)
-            VpnTurboModule.sendStatusEvent("""{"state":"error","error":"${e.message}"}""")
+            VpnTurboModule.sendStatusEvent(JSONObject().put("state", "error").put("error", e.message ?: "unknown error").toString())
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
     /**
-     * Stops the VPN tunnel and cleans up.
+     * Stops the VPN tunnel. Order matters:
+     * 1. Stop tun2socks
+     * 2. Disconnect xray-core
+     * 3. Close TUN interface
      */
     private fun stopVpn() {
         if (!isRunning) return
 
         Log.i(TAG, "Stopping VPN tunnel")
 
-        // When Go tunnel is integrated:
-        //   Tunnel.disconnect()
+        Tunnel.stopTun()
+        Tunnel.disconnect()
 
         try {
             vpnInterface?.close()
@@ -157,9 +194,6 @@ class TunnelVpnService : VpnService() {
         stopSelf()
     }
 
-    /**
-     * Checks if the VPN tunnel is currently active.
-     */
     fun isActive(): Boolean = isRunning
 
     private fun createNotificationChannel() {
