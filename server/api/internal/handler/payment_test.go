@@ -119,36 +119,46 @@ func newTestApp(handler fiber.Handler, userID, tier string) *fiber.App {
 }
 
 // ---- planToPriceID ----
+// planToPriceID now takes a cfg argument so tests must supply one.
+
+func planToPriceIDTestCfg() *config.Config {
+	return &config.Config{
+		StripePricePremium:  "price_TEST_PREMIUM",
+		StripePriceUltimate: "price_TEST_ULTIMATE",
+	}
+}
 
 func TestPlanToPriceID_Premium(t *testing.T) {
-	id, err := planToPriceID("premium")
+	cfg := planToPriceIDTestCfg()
+	id, err := planToPriceID("premium", cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != StripePriceIDPremium {
-		t.Errorf("expected %q, got %q", StripePriceIDPremium, id)
+	if id != cfg.StripePricePremium {
+		t.Errorf("expected %q, got %q", cfg.StripePricePremium, id)
 	}
 }
 
 func TestPlanToPriceID_Ultimate(t *testing.T) {
-	id, err := planToPriceID("ultimate")
+	cfg := planToPriceIDTestCfg()
+	id, err := planToPriceID("ultimate", cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if id != StripePriceIDUltimate {
-		t.Errorf("expected %q, got %q", StripePriceIDUltimate, id)
+	if id != cfg.StripePriceUltimate {
+		t.Errorf("expected %q, got %q", cfg.StripePriceUltimate, id)
 	}
 }
 
 func TestPlanToPriceID_InvalidPlan(t *testing.T) {
-	_, err := planToPriceID("free")
+	_, err := planToPriceID("free", planToPriceIDTestCfg())
 	if err == nil {
 		t.Fatal("expected error for plan=free, got nil")
 	}
 }
 
 func TestPlanToPriceID_EmptyPlan(t *testing.T) {
-	_, err := planToPriceID("")
+	_, err := planToPriceID("", planToPriceIDTestCfg())
 	if err == nil {
 		t.Fatal("expected error for empty plan, got nil")
 	}

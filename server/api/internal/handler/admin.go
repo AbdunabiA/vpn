@@ -122,6 +122,11 @@ func AdminUpdateUser(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 
 		updates := make(map[string]interface{})
 		if req.SubscriptionTier != "" {
+			if _, ok := model.PlanLimits[req.SubscriptionTier]; !ok {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": "subscription_tier must be one of: free, premium, ultimate",
+				})
+			}
 			updates["subscription_tier"] = req.SubscriptionTier
 		}
 		if req.Role != "" {

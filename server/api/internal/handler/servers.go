@@ -165,14 +165,16 @@ func GetServerConfig(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			zap.String("user_id", userID),
 		)
 
-		// Build config with real REALITY keys from the database
+		// REALITY keys must be provisioned in the database — no hardcoded fallback.
 		publicKey := server.RealityPublicKey
 		shortID := server.RealityShortID
-		if publicKey == "" {
-			publicKey = "OAmaJn5JqNlYdNIulgafHAwZs8MLLuU8MXs9rt26sl0"
-		}
-		if shortID == "" {
-			shortID = "abcd1234"
+		if publicKey == "" || shortID == "" {
+			logger.Error("server REALITY keys not configured",
+				zap.String("server_id", serverID),
+			)
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "server REALITY keys not configured",
+			})
 		}
 
 		config := ServerConfig{

@@ -16,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	stripe "github.com/stripe/stripe-go/v81"
 	"go.uber.org/zap"
 )
 
@@ -33,6 +34,9 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to load config", zap.Error(err))
 	}
+
+	// Set Stripe API key once at startup — handlers must not override this.
+	stripe.Key = cfg.StripeKey
 
 	// Connect to PostgreSQL
 	db, err := repository.NewDB(cfg.DatabaseURL)
@@ -64,8 +68,9 @@ func main() {
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Authorization",
 	}))
-	// Redis-backed per-user rate limiting replaces the previous global limiter.
-	app.Use(middleware.RateLimit(redisClient, logger))
+	// Redis-backed per-user rate limiting. Decodes the JWT (when present) to
+	// key on user ID so the limit applies correctly even before auth middleware runs.
+	app.Use(middleware.RateLimit(redisClient, logger, cfg.JWTSecret))
 
 	// API routes
 	api := app.Group("/api/v1")
@@ -127,6 +132,15 @@ func main() {
 	// Stop the background scheduler.
 	scheduler.Stop()
 	logger.Info("scheduler stopped")
+
+	// Close database connection.
+	sqlDB, err := db.DB()
+	if err == nil {
+		if err := sqlDB.Close(); err != nil {
+			logger.Error("error closing database", zap.Error(err))
+		}
+	}
+	logger.Info("database connection closed")
 
 	// Close Redis connection.
 	if err := redisClient.Close(); err != nil {

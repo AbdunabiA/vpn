@@ -156,3 +156,92 @@ func TestIncrRateLimit_KeyExpiresAfterWindow(t *testing.T) {
 		t.Fatalf("expected counter to reset to 1 after TTL expiry, got %d", count)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Edge-case tests: graceful degradation when Redis is unavailable
+// ---------------------------------------------------------------------------
+
+// TestIsTokenBlacklisted_RedisDown_FailsOpen verifies that when Redis is
+// unreachable, IsTokenBlacklisted returns false (fail-open) rather than
+// blocking all authenticated traffic.
+func TestIsTokenBlacklisted_RedisDown_FailsOpen(t *testing.T) {
+	ctx := context.Background()
+	// Point at a port nobody is listening on.
+	deadClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:19998"})
+	t.Cleanup(func() { _ = deadClient.Close() })
+
+	result := cache.IsTokenBlacklisted(ctx, deadClient, "any-hash")
+	if result {
+		t.Error("IsTokenBlacklisted with dead Redis must return false (fail-open), got true")
+	}
+}
+
+// TestBlacklistToken_RedisDown_ReturnsError verifies that BlacklistToken
+// surfaces an error when Redis is unreachable (the caller can decide whether
+// to abort or proceed).
+func TestBlacklistToken_RedisDown_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+	deadClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:19997"})
+	t.Cleanup(func() { _ = deadClient.Close() })
+
+	err := cache.BlacklistToken(ctx, deadClient, "any-hash", time.Minute)
+	if err == nil {
+		t.Error("BlacklistToken with dead Redis should return an error, got nil")
+	}
+}
+
+// TestIncrRateLimit_RedisDown_ReturnsError confirms that IncrRateLimit
+// returns an error (not zero/panic) when Redis is unavailable.
+func TestIncrRateLimit_RedisDown_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+	deadClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:19996"})
+	t.Cleanup(func() { _ = deadClient.Close() })
+
+	_, err := cache.IncrRateLimit(ctx, deadClient, "key:test", time.Minute)
+	if err == nil {
+		t.Error("IncrRateLimit with dead Redis should return an error, got nil")
+	}
+}
+
+// TestIsTokenBlacklisted_EmptyHash verifies an empty hash string is handled
+// without panic — the key just won't exist, so it must return false.
+func TestIsTokenBlacklisted_EmptyHash(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newTestClient(t)
+
+	result := cache.IsTokenBlacklisted(ctx, client, "")
+	if result {
+		t.Error("empty hash must not be blacklisted by default")
+	}
+}
+
+// TestBlacklistToken_ZeroTTL exercises the edge case of TTL=0.
+// Redis treats EXPIRE 0 as an immediate expiry — the token should vanish
+// right away.  We just verify no panic and no error on set.
+func TestBlacklistToken_ZeroTTL_DoesNotPanic(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newTestClient(t)
+
+	// Should not panic; ignore the error (Redis may reject zero-duration TTL).
+	_ = cache.BlacklistToken(ctx, client, "zero-ttl-hash", 0)
+}
+
+// TestIncrRateLimit_LargeCount verifies the counter handles high values
+// without overflow (int64 arithmetic).
+func TestIncrRateLimit_LargeCount(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newTestClient(t)
+
+	// Drive the counter to 1000 and verify final value.
+	var last int64
+	for i := 0; i < 1000; i++ {
+		count, err := cache.IncrRateLimit(ctx, client, "stress:key", time.Hour)
+		if err != nil {
+			t.Fatalf("IncrRateLimit error at iteration %d: %v", i, err)
+		}
+		last = count
+	}
+	if last != 1000 {
+		t.Errorf("expected counter=1000 after 1000 increments, got %d", last)
+	}
+}

@@ -8,7 +8,7 @@ export interface CheckoutSession {
 // Creates a Stripe Checkout session for the given plan.
 // Returns the session id and the hosted Stripe URL to open in the browser.
 export async function createCheckoutSession(plan: string): Promise<CheckoutSession> {
-  const {data} = await api.post<{data: CheckoutSession}>('/subscriptions/checkout', {
+  const {data} = await api.post<{data: CheckoutSession}>('/subscription/checkout', {
     plan,
   });
   return data.data;
@@ -16,5 +16,5 @@ export async function createCheckoutSession(plan: string): Promise<CheckoutSessi
 
 // Cancels the authenticated user's active subscription at period end.
 export async function cancelSubscription(): Promise<void> {
-  await api.post('/subscriptions/cancel');
+  await api.post('/subscription/cancel');
 }

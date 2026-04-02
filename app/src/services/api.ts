@@ -2,9 +2,10 @@ import axios from 'axios';
 import {useAuthStore} from '../stores/authStore';
 
 // Base API URL — points to the Go Fiber backend behind Cloudflare.
-// In production, this rotates between multiple domains for resilience.
-// TODO: Change back to production URL before release
-const API_BASE_URL = 'http://192.168.10.175:3000/api/v1';
+// In development (__DEV__) connects to the local machine; in production uses the live API.
+const API_BASE_URL = __DEV__
+  ? 'http://192.168.10.175:3000/api/v1'
+  : 'https://api.yourvpn.com/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
