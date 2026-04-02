@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -44,26 +45,12 @@ func NewDB(databaseURL string) (*gorm.DB, error) {
 	return db, nil
 }
 
-// isDuplicateError checks if a GORM error is a PostgreSQL unique constraint violation.
+// isDuplicateError checks if a GORM error is a unique constraint violation.
+// Handles both PostgreSQL ("23505") and SQLite ("UNIQUE constraint failed").
 func isDuplicateError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// PostgreSQL unique_violation error code is 23505.
-	// We check the error message directly because the pgx driver wraps
-	// the pg error in a non-exported type.
-	return containsString(err.Error(), "23505")
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	msg := err.Error()
+	return strings.Contains(msg, "23505") || strings.Contains(msg, "UNIQUE constraint failed")
 }

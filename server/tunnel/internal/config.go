@@ -14,6 +14,12 @@ type Config struct {
 	// Protocol: "vless-reality" or "amneziawg"
 	Protocol string `json:"protocol"`
 
+	// Clients is the list of UUIDs (VLESS user IDs) allowed to connect.
+	// Each entry becomes a VLESS client in the xray-core inbound config.
+	// Required for all xray-based protocols (vless-reality, vless-ws).
+	// Not used when Protocol is "amneziawg".
+	Clients []string `json:"clients"`
+
 	// REALITY configuration (used when Protocol is "vless-reality")
 	Reality RealityConfig `json:"reality"`
 
@@ -96,6 +102,9 @@ func (c *Config) validate() error {
 
 	switch c.Protocol {
 	case "vless-reality":
+		if len(c.Clients) == 0 {
+			return fmt.Errorf("clients must have at least one UUID for protocol %q", c.Protocol)
+		}
 		if c.Reality.PrivateKey == "" {
 			return fmt.Errorf("reality.private_key is required")
 		}

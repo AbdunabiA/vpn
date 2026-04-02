@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+
 // --- AWGServerConfig.validate() tests ---
 
 func TestAWGServerConfigValidateHappyPath(t *testing.T) {
@@ -170,10 +171,13 @@ func TestAWGServerApplyWGConfigContainsRequiredFields(t *testing.T) {
 	}
 }
 
-// --- stringReader tests ---
+// --- strings.NewReader behaviour tests ---
+// These replace the former custom stringReader tests. strings.NewReader is now
+// used directly for wg setconf stdin, so we verify the standard library
+// behaviour as a sanity check (and to keep test coverage at the same level).
 
-func TestStringReaderReadsAllData(t *testing.T) {
-	r := newStringReader("hello world")
+func TestStringsReaderReadsAllData(t *testing.T) {
+	r := strings.NewReader("hello world")
 	buf := make([]byte, 5)
 
 	n, err := r.Read(buf)
@@ -193,8 +197,8 @@ func TestStringReaderReadsAllData(t *testing.T) {
 	}
 }
 
-func TestStringReaderEOF(t *testing.T) {
-	r := newStringReader("hi")
+func TestStringsReaderEOF(t *testing.T) {
+	r := strings.NewReader("hi")
 	buf := make([]byte, 10)
 
 	n, _ := r.Read(buf)
@@ -202,10 +206,10 @@ func TestStringReaderEOF(t *testing.T) {
 		t.Errorf("expected 'hi', got %q", string(buf[:n]))
 	}
 
-	// Next read should return EOF-like error.
+	// Next read must return io.EOF.
 	_, err := r.Read(buf)
 	if err == nil {
-		t.Error("expected error at EOF, got nil")
+		t.Error("expected io.EOF after all bytes read, got nil")
 	}
 }
 
@@ -216,6 +220,7 @@ func TestConfigValidateAWGEnabledInvalid(t *testing.T) {
 	cfg := &Config{
 		Port:     443,
 		Protocol: "vless-reality",
+		Clients:  []string{"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		Reality: RealityConfig{
 			PrivateKey:  "key",
 			Dest:        "www.example.com:443",
@@ -240,6 +245,7 @@ func TestConfigValidateAWGEnabledValid(t *testing.T) {
 	cfg := &Config{
 		Port:     443,
 		Protocol: "vless-reality",
+		Clients:  []string{"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		Reality: RealityConfig{
 			PrivateKey:  "key",
 			Dest:        "www.example.com:443",
@@ -266,6 +272,7 @@ func TestConfigValidateAWGDisabledSkipsValidation(t *testing.T) {
 	cfg := &Config{
 		Port:     443,
 		Protocol: "vless-reality",
+		Clients:  []string{"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		Reality: RealityConfig{
 			PrivateKey:  "key",
 			Dest:        "www.example.com:443",
@@ -281,6 +288,26 @@ func TestConfigValidateAWGDisabledSkipsValidation(t *testing.T) {
 
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("disabled AWG should not trigger validation: %v", err)
+	}
+}
+
+func TestConfigValidateClientsRequired(t *testing.T) {
+	// vless-reality without any clients must be rejected.
+	cfg := &Config{
+		Port:     443,
+		Protocol: "vless-reality",
+		// Clients intentionally empty
+		Reality: RealityConfig{
+			PrivateKey:  "key",
+			Dest:        "www.example.com:443",
+			ServerNames: []string{"www.example.com"},
+			ShortIDs:    []string{"abcd1234"},
+		},
+		HealthPort: 8080,
+	}
+
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected error when clients list is empty for vless-reality, got nil")
 	}
 }
 

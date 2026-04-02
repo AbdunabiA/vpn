@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -91,20 +92,14 @@ func probeServer(address string, port int) ProbeResult {
 	return result
 }
 
-// sortProbeResults sorts results: successful first (by latency), then failed.
+// sortProbeResults sorts results: successful first (by latency ascending), then failed.
 func sortProbeResults(results []ProbeResult) {
-	n := len(results)
-	for i := 0; i < n-1; i++ {
-		for j := 0; j < n-i-1; j++ {
-			swap := false
-			if !results[j].Success && results[j+1].Success {
-				swap = true
-			} else if results[j].Success && results[j+1].Success && results[j].Latency > results[j+1].Latency {
-				swap = true
-			}
-			if swap {
-				results[j], results[j+1] = results[j+1], results[j]
-			}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Success != results[j].Success {
+			// Successful probes sort before failed ones.
+			return results[i].Success
 		}
-	}
+		// Both have the same success status — sort by latency ascending.
+		return results[i].Latency < results[j].Latency
+	})
 }

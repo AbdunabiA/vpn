@@ -23,6 +23,45 @@ func CreateConnection(db *gorm.DB, conn *model.Connection) error {
 	return result.Error
 }
 
+// CreateConnectionAtomic inserts a connection record only when the caller's
+// current active-connection count is below maxDevices.  The check and the
+// insert are performed in a single statement so there is no TOCTOU window
+// between counting and inserting.
+//
+// Returns (true, nil) when the row was inserted successfully.
+// Returns (false, nil) when the device limit has already been reached (the
+// caller should return HTTP 429).
+// Returns (false, err) on any other database error.
+func CreateConnectionAtomic(db *gorm.DB, conn *model.Connection, maxDevices int) (bool, error) {
+	if conn.ID == "" {
+		conn.ID = uuid.NewString()
+	}
+	if conn.ConnectedAt.IsZero() {
+		conn.ConnectedAt = time.Now()
+	}
+
+	// The INSERT … SELECT pattern makes the limit check and the insert atomic.
+	// No row is written when the sub-query count equals or exceeds maxDevices.
+	result := db.Exec(
+		`INSERT INTO connections (id, user_id, server_id, connected_at, bytes_up, bytes_down)
+		 SELECT ?, ?, ?, ?, 0, 0
+		 WHERE (
+		   SELECT COUNT(*) FROM connections
+		   WHERE user_id = ? AND disconnected_at IS NULL
+		 ) < ?`,
+		conn.ID, conn.UserID, conn.ServerID, conn.ConnectedAt,
+		conn.UserID, maxDevices,
+	)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		// The sub-query returned count >= maxDevices; no row was inserted.
+		return false, nil
+	}
+	return true, nil
+}
+
 // DisconnectConnection marks a connection as disconnected and records final byte counts.
 // Returns ErrNotFound if the connection does not exist.
 func DisconnectConnection(db *gorm.DB, id string, bytesUp, bytesDown int64) error {

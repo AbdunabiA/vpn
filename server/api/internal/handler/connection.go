@@ -61,49 +61,65 @@ func RegisterConnection(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Enforce device limit: count existing active connections.
+		// Enforce device limit using an atomic INSERT … SELECT so that the
+		// count check and the row insertion happen in a single statement,
+		// eliminating the TOCTOU race between COUNT and INSERT.
 		limits, ok := model.PlanLimits[tier]
 		if !ok {
 			// Unknown tier — fall back to the free plan limits.
 			limits = model.PlanLimits["free"]
 		}
 
-		activeCount, err := repository.CountActiveConnections(db, userID)
-		if err != nil {
-			logger.Error("failed to count active connections",
-				zap.String("user_id", userID),
-				zap.Error(err),
-			)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		if int(activeCount) >= limits.MaxDevices {
-			logger.Warn("device limit reached",
-				zap.String("user_id", userID),
-				zap.String("tier", tier),
-				zap.Int64("active", activeCount),
-				zap.Int("limit", limits.MaxDevices),
-			)
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error":        "device limit reached",
-				"active_count": activeCount,
-				"max_devices":  limits.MaxDevices,
-			})
-		}
-
 		conn := model.Connection{
 			UserID:   userID,
 			ServerID: req.ServerID,
 		}
-		if err := repository.CreateConnection(db, &conn); err != nil {
+
+		// When MaxDevices is UnlimitedDevices (-1) skip the limit check entirely.
+		if limits.MaxDevices == model.UnlimitedDevices {
+			if err := repository.CreateConnection(db, &conn); err != nil {
+				logger.Error("failed to create connection",
+					zap.String("user_id", userID),
+					zap.Error(err),
+				)
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "internal server error",
+				})
+			}
+			logger.Info("connection registered (unlimited tier)",
+				zap.String("connection_id", conn.ID),
+				zap.String("user_id", userID),
+				zap.String("server_id", req.ServerID),
+			)
+			return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+				"data": fiber.Map{
+					"id":           conn.ID,
+					"server_id":    conn.ServerID,
+					"connected_at": conn.ConnectedAt,
+				},
+			})
+		}
+
+		inserted, err := repository.CreateConnectionAtomic(db, &conn, limits.MaxDevices)
+		if err != nil {
 			logger.Error("failed to create connection",
 				zap.String("user_id", userID),
 				zap.Error(err),
 			)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "internal server error",
+			})
+		}
+
+		if !inserted {
+			logger.Warn("device limit reached",
+				zap.String("user_id", userID),
+				zap.String("tier", tier),
+				zap.Int("limit", limits.MaxDevices),
+			)
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":       "device limit reached",
+				"max_devices": limits.MaxDevices,
 			})
 		}
 

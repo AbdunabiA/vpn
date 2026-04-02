@@ -64,7 +64,9 @@ services:
     container_name: vpn-tunnel
     ports:
       - "443:443"
-      - "8080:8080"
+      # Port 8080 (health check) is intentionally NOT exposed externally.
+      # It binds to 127.0.0.1 inside the container; Docker health checks
+      # run inside the container so they reach it without a published port.
       # AmneziaWG (WireGuard-based) uses UDP — protocol must be explicit.
       # Ensure your firewall/security group allows inbound UDP 51820 as well.
       - "51820:51820/udp"

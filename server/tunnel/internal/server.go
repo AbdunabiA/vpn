@@ -190,6 +190,15 @@ func (s *TunnelServer) Stop() error {
 // This configuration makes the server appear as a legitimate HTTPS server
 // to any network observer or DPI system.
 func (s *TunnelServer) buildXRayConfig() map[string]interface{} {
+	// Build the clients list from the configured UUIDs.
+	clients := make([]map[string]interface{}, 0, len(s.config.Clients))
+	for _, uid := range s.config.Clients {
+		clients = append(clients, map[string]interface{}{
+			"id":   uid,
+			"flow": "xtls-rprx-vision",
+		})
+	}
+
 	return map[string]interface{}{
 		"log": map[string]interface{}{
 			"loglevel": "warning",
@@ -199,13 +208,7 @@ func (s *TunnelServer) buildXRayConfig() map[string]interface{} {
 				"port":     s.config.Port,
 				"protocol": "vless",
 				"settings": map[string]interface{}{
-					"clients": []map[string]interface{}{
-						{
-							// Accept any UUID — in production, validate against API
-							"id":   "00000000-0000-0000-0000-000000000000",
-							"flow": "xtls-rprx-vision",
-						},
-					},
+					"clients":    clients,
 					"decryption": "none",
 				},
 				"streamSettings": map[string]interface{}{
@@ -245,6 +248,16 @@ func (s *TunnelServer) buildXRayConfig() map[string]interface{} {
 //   - Listens on 127.0.0.1 only — never exposed directly to the internet
 //   - flow is empty for clients — xtls-rprx-vision is TCP-only
 func (s *TunnelServer) buildWebSocketConfig() map[string]interface{} {
+	// Build the clients list from the configured UUIDs.
+	// flow must be empty for WebSocket transport — xtls-rprx-vision is TCP-only.
+	wsClients := make([]map[string]interface{}, 0, len(s.config.Clients))
+	for _, uid := range s.config.Clients {
+		wsClients = append(wsClients, map[string]interface{}{
+			"id":   uid,
+			"flow": "",
+		})
+	}
+
 	return map[string]interface{}{
 		"log": map[string]interface{}{
 			"loglevel": "warning",
@@ -257,14 +270,7 @@ func (s *TunnelServer) buildWebSocketConfig() map[string]interface{} {
 				"port":     s.config.WebSocket.Port,
 				"protocol": "vless",
 				"settings": map[string]interface{}{
-					"clients": []map[string]interface{}{
-						{
-							// Accept any UUID — in production, validate against API.
-							// Note: flow must be empty for WebSocket transport.
-							"id":   "00000000-0000-0000-0000-000000000000",
-							"flow": "",
-						},
-					},
+					"clients":    wsClients,
 					"decryption": "none",
 				},
 				"streamSettings": map[string]interface{}{
@@ -303,8 +309,10 @@ func (s *TunnelServer) startHealthServer() {
 		})
 	})
 
+	// Bind on localhost only — the health endpoint must not be reachable
+	// from the public internet. Docker/Compose health checks use localhost.
 	s.healthServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.config.HealthPort),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", s.config.HealthPort),
 		Handler: mux,
 	}
 
