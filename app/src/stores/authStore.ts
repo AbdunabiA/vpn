@@ -1,10 +1,9 @@
 import {create} from 'zustand';
-import {MMKV} from 'react-native-mmkv';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api';
 import type {User, AuthTokens} from '../types/api';
 
-// Encrypted storage for auth tokens
-const storage = new MMKV({id: 'auth-storage'});
+const TOKENS_KEY = 'auth-tokens';
 
 interface AuthState {
   user: User | null;
@@ -28,17 +27,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: false,
 
-  // Called once on app startup — restores tokens from MMKV
+  // Called once on app startup — restores tokens from storage
   initialize: () => {
-    const stored = storage.getString('tokens');
-    if (stored) {
-      try {
-        const tokens = JSON.parse(stored) as AuthTokens;
-        set({tokens, isAuthenticated: true});
-      } catch {
-        storage.delete('tokens');
+    AsyncStorage.getItem(TOKENS_KEY).then(stored => {
+      if (stored) {
+        try {
+          const tokens = JSON.parse(stored) as AuthTokens;
+          set({tokens, isAuthenticated: true});
+        } catch {
+          AsyncStorage.removeItem(TOKENS_KEY);
+        }
       }
-    }
+    });
   },
 
   login: async (email: string, password: string) => {
@@ -49,7 +49,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         password,
       });
       const tokens = data.data;
-      storage.set('tokens', JSON.stringify(tokens));
+      await AsyncStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
       set({tokens, isAuthenticated: true, isLoading: false});
     } catch (error) {
       set({isLoading: false});
@@ -65,7 +65,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         password,
       });
       const tokens = data.data;
-      storage.set('tokens', JSON.stringify(tokens));
+      await AsyncStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
       set({tokens, isAuthenticated: true, isLoading: false});
     } catch (error) {
       set({isLoading: false});
@@ -83,12 +83,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   updateTokens: (tokens: AuthTokens) => {
-    storage.set('tokens', JSON.stringify(tokens));
+    AsyncStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
     set({tokens});
   },
 
   logout: () => {
-    storage.delete('tokens');
+    AsyncStorage.removeItem(TOKENS_KEY);
     set({user: null, tokens: null, isAuthenticated: false});
   },
 

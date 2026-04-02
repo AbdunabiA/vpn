@@ -54,7 +54,7 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     }
 
     private val activityListener = object : BaseActivityEventListener() {
-        override fun onActivityResult(activity: Activity?, requestCode: Int, resultCode: Int, intent: Intent?) {
+        override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, intent: Intent?) {
             if (requestCode == VPN_PREPARE_REQUEST) {
                 if (resultCode == Activity.RESULT_OK) {
                     // User granted VPN permission — start the service
@@ -79,18 +79,18 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun connect(configJSON: String, promise: Promise) {
         try {
-            val activity = currentActivity
+            val activity = reactApplicationContext.currentActivity
             if (activity == null) {
                 promise.reject("NO_ACTIVITY", "No active activity")
                 return
             }
 
             // Check if VPN permission is granted
-            val vpnIntent = VpnService.prepare(activity)
+            val vpnIntent = VpnService.prepare(activity as android.content.Context)
             if (vpnIntent != null) {
                 // Need to request permission — save config for after approval
                 pendingConfigJson = configJSON
-                activity.startActivityForResult(vpnIntent, VPN_PREPARE_REQUEST)
+                activity.startActivityForResult(vpnIntent, VPN_PREPARE_REQUEST, null)
                 promise.resolve("") // Will connect after permission granted
             } else {
                 // Permission already granted — start immediately

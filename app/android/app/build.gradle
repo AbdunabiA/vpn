@@ -112,7 +112,7 @@ dependencies {
     implementation("com.facebook.react:react-android")
 
     // Go tunnel library compiled via gomobile (client-tunnel/Makefile -> libs/tunnel.aar)
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    implementation fileTree(dir: 'libs', include: ['*.aar'])
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
