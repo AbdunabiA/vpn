@@ -226,11 +226,13 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
                     val perms = pkg.requestedPermissions ?: continue
                     if (!perms.contains("android.permission.INTERNET")) continue
 
-                    val isSystem = (pkg.applicationInfo.flags and
+                    val appInfo = pkg.applicationInfo ?: continue
+
+                    val isSystem = (appInfo.flags and
                         android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
 
                     val appName = try {
-                        pm.getApplicationLabel(pkg.applicationInfo).toString()
+                        pm.getApplicationLabel(appInfo).toString()
                     } catch (_: Exception) {
                         pkg.packageName
                     }
