@@ -2,9 +2,12 @@ package com.vpnapp.vpn
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.VpnService
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import org.json.JSONArray
+import org.json.JSONObject
 import tunnel.Tunnel
 
 /**
@@ -148,6 +151,103 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun getTrafficStats(promise: Promise) {
         promise.resolve(Tunnel.getTrafficStats())
+    }
+
+    /**
+     * Enable or disable the kill switch.
+     *
+     * The preference is persisted in SharedPreferences so it survives app and
+     * service restarts. If TunnelVpnService is currently running the setting is
+     * applied immediately.
+     */
+    @ReactMethod
+    fun setKillSwitch(enabled: Boolean, promise: Promise) {
+        try {
+            // Persist so the service can read it on next start
+            reactApplicationContext
+                .getSharedPreferences("vpn_prefs", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("kill_switch_enabled", enabled)
+                .apply()
+
+            // Apply to the running service instance if available
+            TunnelVpnService.instance?.setKillSwitch(enabled)
+
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("KILL_SWITCH_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * Persist and apply the list of package names that should bypass the VPN.
+     * appsJson: JSON array of package name strings, e.g. ["com.google.android.youtube"].
+     */
+    @ReactMethod
+    fun setExcludedApps(appsJson: String, promise: Promise) {
+        try {
+            // Validate JSON
+            val arr = JSONArray(appsJson)
+            val apps = (0 until arr.length()).map { arr.getString(it) }
+
+            // Persist so the service can restore the list on restart
+            reactApplicationContext
+                .getSharedPreferences(TunnelVpnService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString(TunnelVpnService.PREF_EXCLUDED_APPS, appsJson)
+                .apply()
+
+            // Apply to the running service instance if available (rebuilds TUN immediately)
+            TunnelVpnService.instance?.setExcludedApps(apps)
+
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("SET_EXCLUDED_APPS_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * Query installed apps that have INTERNET permission.
+     * Returns a JSON array of {packageName, appName, isSystemApp}.
+     * System apps (android.uid.system flag) are included but flagged.
+     *
+     * Runs on a background thread — PackageManager queries can be slow.
+     */
+    @ReactMethod
+    fun getInstalledApps(promise: Promise) {
+        Thread {
+            try {
+                val pm = reactApplicationContext.packageManager
+                val packages = pm.getInstalledPackages(PackageManager.GET_PERMISSIONS)
+                val result = JSONArray()
+
+                for (pkg in packages) {
+                    // Only include apps that declare INTERNET permission
+                    val perms = pkg.requestedPermissions ?: continue
+                    if (!perms.contains("android.permission.INTERNET")) continue
+
+                    val isSystem = (pkg.applicationInfo.flags and
+                        android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+
+                    val appName = try {
+                        pm.getApplicationLabel(pkg.applicationInfo).toString()
+                    } catch (_: Exception) {
+                        pkg.packageName
+                    }
+
+                    val item = JSONObject().apply {
+                        put("packageName", pkg.packageName)
+                        put("appName", appName)
+                        put("isSystemApp", isSystem)
+                    }
+                    result.put(item)
+                }
+
+                promise.resolve(result.toString())
+            } catch (e: Exception) {
+                promise.reject("GET_INSTALLED_APPS_ERROR", e.message, e)
+            }
+        }.start()
     }
 
     private fun startService(configJson: String) {

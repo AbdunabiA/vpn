@@ -111,6 +111,54 @@ export async function setKillSwitch(enabled: boolean): Promise<void> {
   await VpnModule.setKillSwitch(enabled);
 }
 
+// Set apps that bypass the VPN (Android only — per-app split tunneling).
+// apps: list of package name strings, e.g. ["com.google.android.youtube"].
+export async function setExcludedApps(apps: string[]): Promise<void> {
+  if (!VpnModule) {
+    if (__DEV__) {
+      console.log('[VPN Bridge] Simulating setExcludedApps:', apps);
+      return;
+    }
+    throw new Error('VPN native module not available');
+  }
+
+  await VpnModule.setExcludedApps(JSON.stringify(apps));
+}
+
+export interface InstalledApp {
+  packageName: string;
+  appName: string;
+  isSystemApp: boolean;
+}
+
+// Get installed apps that have INTERNET permission (Android only).
+// On iOS returns an empty array — use setExcludedDomains instead.
+export async function getInstalledApps(): Promise<InstalledApp[]> {
+  if (!VpnModule) {
+    if (__DEV__) {
+      return [];
+    }
+    throw new Error('VPN native module not available');
+  }
+
+  const json = await VpnModule.getInstalledApps();
+  return JSON.parse(json) as InstalledApp[];
+}
+
+// Set domains that bypass the VPN (iOS only — domain-based split tunneling).
+// domains: list of domain strings, e.g. ["banking.com", "work.internal"].
+export async function setExcludedDomains(domains: string[]): Promise<void> {
+  if (!VpnModule) {
+    if (__DEV__) {
+      console.log('[VPN Bridge] Simulating setExcludedDomains:', domains);
+      return;
+    }
+    throw new Error('VPN native module not available');
+  }
+
+  await VpnModule.setExcludedDomains(JSON.stringify(domains));
+}
+
 // Probe servers to find the fastest one
 export async function probeServers(
   servers: Array<{address: string; port: number}>,

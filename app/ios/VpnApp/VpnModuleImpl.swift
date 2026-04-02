@@ -93,6 +93,54 @@ class VpnModuleImpl: RCTEventEmitter {
         }
     }
 
+    @objc func setKillSwitch(_ enabled: Bool,
+                             resolve: @escaping RCTPromiseResolveBlock,
+                             reject: @escaping RCTPromiseRejectBlock) {
+        // Ensure the manager is initialized before applying the preference.
+        // If it isn't, ensureInitialized will load it; setKillSwitch persists
+        // the preference to shared UserDefaults so it is applied in setupManager.
+        ensureInitialized { [weak self] error in
+            if let error = error {
+                // Non-fatal: the preference is still persisted and will take
+                // effect when the manager is initialized the next time.
+                _ = self // suppress unused-capture warning
+                reject("KILL_SWITCH_ERROR", error.localizedDescription, error)
+                return
+            }
+
+            VpnManager.shared.setKillSwitch(enabled: enabled) { error in
+                if let error = error {
+                    reject("KILL_SWITCH_ERROR", error.localizedDescription, error)
+                } else {
+                    resolve(nil)
+                }
+            }
+        }
+    }
+
+    // MARK: - Split Tunneling
+
+    /// Persist a JSON array of domain strings that should bypass the VPN tunnel.
+    /// Stored in the shared App Group UserDefaults so that VpnManager can include
+    /// them in the options dict when starting the Network Extension.
+    @objc func setExcludedDomains(_ domainsJson: String,
+                                   resolve: @escaping RCTPromiseResolveBlock,
+                                   reject: @escaping RCTPromiseRejectBlock) {
+        guard let defaults = UserDefaults(suiteName: "group.com.vpnapp.shared") else {
+            reject("DEFAULTS_ERROR", "Cannot access shared UserDefaults", nil)
+            return
+        }
+        defaults.set(domainsJson, forKey: "excluded_domains_json")
+        resolve(nil)
+    }
+
+    /// iOS does not support per-app VPN without MDM — always returns an empty
+    /// array so the JS layer can display the domain-based UI branch instead.
+    @objc func getInstalledApps(_ resolve: @escaping RCTPromiseResolveBlock,
+                                reject: @escaping RCTPromiseRejectBlock) {
+        resolve("[]")
+    }
+
     // MARK: - Private
 
     private func setupVpnManager() {

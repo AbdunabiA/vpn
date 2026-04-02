@@ -28,7 +28,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         os_log("Starting VPN tunnel", log: log, type: .info)
 
-        let configJSON = options?["config"] as? String ?? "{}"
+        let baseConfigJSON = options?["config"] as? String ?? "{}"
+
+        // Merge excluded_domains into the config JSON so that the Go tunnel can
+        // insert a direct routing rule for those domains.
+        let configJSON = mergeExcludedDomains(into: baseConfigJSON, options: options)
 
         // 1. Register status callback
         TunnelSetStatusCallback(statusHandler)
@@ -115,6 +119,36 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         TunnelDisconnect()
 
         completionHandler()
+    }
+
+    // MARK: - Split Tunneling Helpers
+
+    /// Reads the `excluded_domains` JSON string from the tunnel options (set by
+    /// VpnManager.connect) and merges it into the xray ConnectConfig JSON as the
+    /// `excluded_domains` array field.  Returns the original configJSON unchanged
+    /// if parsing fails or if no domains are present.
+    private func mergeExcludedDomains(into configJSON: String,
+                                       options: [String: NSObject]?) -> String {
+        guard
+            let domainsJson = options?["excluded_domains"] as? String,
+            !domainsJson.isEmpty,
+            let configData = configJSON.data(using: .utf8),
+            var configDict = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+            let domainsData = domainsJson.data(using: .utf8),
+            let domainsArray = try? JSONSerialization.jsonObject(with: domainsData) as? [String],
+            !domainsArray.isEmpty
+        else {
+            return configJSON
+        }
+
+        configDict["excluded_domains"] = domainsArray
+
+        if let merged = try? JSONSerialization.data(withJSONObject: configDict),
+           let mergedString = String(data: merged, encoding: .utf8) {
+            return mergedString
+        }
+
+        return configJSON
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {

@@ -21,6 +21,19 @@ export interface VpnNativeModule {
   // Enable or disable the OS-level kill switch.
   // On Android this sets an always-on VPN flag; on iOS it toggles NEOnDemand rules.
   setKillSwitch(enabled: boolean): Promise<void>;
+
+  // Split tunneling — Android: per-app exclusion via VpnService.Builder.
+  // appsJson is a JSON array of package name strings.
+  setExcludedApps(appsJson: string): Promise<void>;
+
+  // Query installed apps that declare INTERNET permission.
+  // Returns a JSON array of {packageName, appName, isSystemApp}.
+  // On iOS always returns "[]" (per-app VPN requires MDM).
+  getInstalledApps(): Promise<string>;
+
+  // Split tunneling — iOS: domain-based bypass via xray direct routing rule.
+  // domainsJson is a JSON array of domain strings, e.g. ["banking.com"].
+  setExcludedDomains(domainsJson: string): Promise<void>;
 }
 
 // Event names emitted by the native module
