@@ -17,8 +17,35 @@ type Config struct {
 	// REALITY configuration (used when Protocol is "vless-reality")
 	Reality RealityConfig `json:"reality"`
 
+	// WebSocket configuration for CDN transport.
+	// When WebSocket.Enabled is true, xray-core opens an additional VLESS inbound
+	// on WebSocket transport so Nginx can proxy CDN (Cloudflare) traffic to it.
+	WebSocket WebSocketServerConfig `json:"websocket"`
+
+	// AWG is the AmneziaWG server configuration.
+	// When AWG.Enabled is true the AWG server starts alongside xray-core on a
+	// separate UDP port (default 51820), allowing clients to choose either protocol.
+	AWG AWGServerConfig `json:"awg"`
+
 	// Health check endpoint port (separate from tunnel port)
 	HealthPort int `json:"health_port"`
+}
+
+// WebSocketServerConfig holds settings for the optional WebSocket CDN inbound.
+// This inbound listens on localhost only — Nginx proxies from the public CDN
+// domain down to this local port.
+type WebSocketServerConfig struct {
+	// Enabled controls whether the WebSocket inbound is started.
+	Enabled bool `json:"enabled"`
+
+	// Port is the local port xray-core listens on for WebSocket connections.
+	// Nginx proxies the public HTTPS/WebSocket traffic to this port.
+	// Must not be exposed publicly — bind is 127.0.0.1 only.
+	Port int `json:"port"`
+
+	// Path is the WebSocket upgrade path to accept, e.g. "/ws".
+	// Must match the path configured in Nginx and on the client.
+	Path string `json:"path"`
 }
 
 // RealityConfig holds VLESS+REALITY specific settings.
@@ -81,8 +108,30 @@ func (c *Config) validate() error {
 		if len(c.Reality.ShortIDs) == 0 {
 			return fmt.Errorf("reality.short_ids must have at least one entry")
 		}
+	case "amneziawg":
+		// A server running as "amneziawg" primary does not need xray-core config.
+		// The AWG section is validated below.
 	default:
-		return fmt.Errorf("unsupported protocol: %s (supported: vless-reality)", c.Protocol)
+		return fmt.Errorf("unsupported protocol: %s (supported: vless-reality, amneziawg)", c.Protocol)
+	}
+
+	if c.WebSocket.Enabled {
+		if c.WebSocket.Port <= 0 || c.WebSocket.Port > 65535 {
+			return fmt.Errorf("websocket.port must be between 1 and 65535, got %d", c.WebSocket.Port)
+		}
+		if c.WebSocket.Port == c.Port {
+			return fmt.Errorf("websocket.port must differ from port (%d)", c.Port)
+		}
+		if c.WebSocket.Path == "" {
+			c.WebSocket.Path = "/ws"
+		}
+	}
+
+	// AWG can run alongside any primary protocol.
+	if c.AWG.Enabled {
+		if err := c.AWG.validate(); err != nil {
+			return fmt.Errorf("awg: %w", err)
+		}
 	}
 
 	if c.HealthPort <= 0 {

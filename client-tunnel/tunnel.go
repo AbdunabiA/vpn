@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	// XRay-core — import only what VLESS+REALITY client needs
+	// XRay-core — import only what VLESS+REALITY/WebSocket client needs
 	"github.com/xtls/xray-core/core"
 	_ "github.com/xtls/xray-core/app/dispatcher"
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
@@ -29,6 +29,8 @@ import (
 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
 	_ "github.com/xtls/xray-core/transport/internet/reality"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
+	_ "github.com/xtls/xray-core/transport/internet/tls"
+	_ "github.com/xtls/xray-core/transport/internet/websocket"
 	_ "github.com/xtls/xray-core/infra/conf/serial"
 )
 
@@ -47,11 +49,18 @@ const (
 
 // ConnectConfig is the configuration passed from the mobile app to establish a tunnel.
 type ConnectConfig struct {
-	ServerAddress   string               `json:"server_address"`
-	ServerPort      int                  `json:"server_port"`
-	Protocol        string               `json:"protocol"`
-	UserID          string               `json:"user_id"`
-	Reality         *RealityClientConfig `json:"reality,omitempty"`
+	ServerAddress string               `json:"server_address"`
+	ServerPort    int                  `json:"server_port"`
+	Protocol      string               `json:"protocol"`
+	UserID        string               `json:"user_id"`
+	Reality       *RealityClientConfig `json:"reality,omitempty"`
+	// WebSocket holds CDN transport settings for "vless-ws" protocol.
+	// When set, traffic is routed through Cloudflare CDN via WebSocket+TLS.
+	WebSocket *WebSocketConfig `json:"websocket,omitempty"`
+	// AWG holds AmneziaWG configuration. Present only when Protocol is "amneziawg".
+	// When set, the tunnel bypasses xray-core entirely and routes all traffic
+	// through the WireGuard device at the TUN layer — no SOCKS5 proxy involved.
+	AWG *AWGConfig `json:"awg,omitempty"`
 	// ExcludedDomains lists domains that should bypass the VPN and go direct.
 	// Used on iOS for domain-based split tunneling (Android uses per-app exclusion
 	// via VpnService.Builder.addDisallowedApplication instead).
@@ -64,6 +73,18 @@ type RealityClientConfig struct {
 	ShortID     string `json:"short_id"`
 	ServerName  string `json:"server_name"`
 	Fingerprint string `json:"fingerprint"`
+}
+
+// WebSocketConfig holds CDN/WebSocket transport settings.
+// Used when Protocol is "vless-ws": the client connects to a Cloudflare-proxied
+// domain over HTTPS/WebSocket. Cloudflare terminates TLS and forwards the
+// WebSocket connection to the origin server running xray-core.
+type WebSocketConfig struct {
+	// Host is the Cloudflare-proxied CDN domain, e.g. "vpn.example.com".
+	// This is used as both the TLS SNI and the WebSocket Host header.
+	Host string `json:"host"`
+	// Path is the WebSocket upgrade path, e.g. "/ws".
+	Path string `json:"path"`
 }
 
 // TunnelStatus holds the current state of the VPN tunnel.
@@ -151,7 +172,8 @@ func Connect(configJSON string) string {
 		mgr.mu.Unlock()
 		return errMsg
 	}
-	if config.UserID == "" {
+	// user_id is required for xray-based protocols; not used for AmneziaWG.
+	if config.Protocol != "amneziawg" && config.UserID == "" {
 		errMsg := "user_id is required"
 		mgr.setStatus(TunnelStatus{State: StateError, Error: errMsg})
 		mgr.mu.Unlock()
@@ -188,11 +210,14 @@ func Disconnect() string {
 
 	mgr.setStatus(TunnelStatus{State: StateDisconnecting})
 
-	// Close XRay-core instance
+	// Close XRay-core instance (nil-safe; only set for xray-based protocols).
 	if mgr.xrayInstance != nil {
 		mgr.xrayInstance.Close()
 		mgr.xrayInstance = nil
 	}
+
+	// Close AmneziaWG device (no-op when not running).
+	stopAWGTunnel()
 
 	// Clear stats and SOCKS auth credentials
 	mgr.stats = nil
@@ -218,15 +243,94 @@ func GetStatus() string {
 	return string(data)
 }
 
-// runTunnel establishes the VPN connection via XRay-core.
+// runTunnel dispatches to the correct tunnel implementation based on Protocol.
+//   - "amneziawg" → runAWGTunnel (WireGuard at TUN level, no xray-core)
+//   - "vless-reality", "vless-ws", or anything else → runXRayTunnel
+//
 // Sends "" to readyCh on success, or an error string on failure.
 func (m *tunnelManager) runTunnel(config ConnectConfig, readyCh chan<- string) {
+	if config.Protocol == "amneziawg" {
+		m.runAWGTunnel(config, readyCh)
+		return
+	}
+	m.runXRayTunnel(config, readyCh)
+}
+
+// runAWGTunnel is the AmneziaWG (WireGuard-based) tunnel path.
+//
+// Unlike the xray path this function does NOT start a SOCKS5 proxy.
+// Instead it registers the AWG config so that StartTunAWG() — called by
+// the native module immediately after — can hand the TUN fd to the
+// amneziawg-go device.  The goroutine then blocks on stopCh.
+func (m *tunnelManager) runAWGTunnel(config ConnectConfig, readyCh chan<- string) {
+	serverAddr := fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort)
+	protocol := config.Protocol
+
+	if config.AWG == nil {
+		errMsg := "awg config is required for amneziawg protocol"
+		m.mu.Lock()
+		m.setStatus(TunnelStatus{State: StateError, Error: errMsg})
+		m.mu.Unlock()
+		readyCh <- errMsg
+		return
+	}
+
+	// Snapshot the AWG config then clear sensitive data from the outer struct.
+	awgCfg := *config.AWG
+	config = ConnectConfig{}
+
+	// Store the pending AWG config so StartTunAWG() can retrieve it.
+	setPendingAWGConfig(&awgCfg)
+
+	m.mu.Lock()
+
+	if m.stopCh == nil {
+		clearPendingAWGConfig()
+		m.mu.Unlock()
+		readyCh <- "disconnected during connect"
+		return
+	}
+
+	m.connectedAt = time.Now()
+	m.stats = NewTrafficStats()
+	stopCh := m.stopCh
+
+	m.setStatus(TunnelStatus{
+		State:       StateConnected,
+		ServerAddr:  serverAddr,
+		Protocol:    protocol,
+		ConnectedAt: m.connectedAt.Unix(),
+	})
+	m.mu.Unlock()
+
+	// Signal to the native module that it can now call StartTunAWG().
+	readyCh <- ""
+
+	// Block until Disconnect() is called.
+	<-stopCh
+
+	// Clean up any config that was never consumed (e.g. if native never called StartTunAWG).
+	clearPendingAWGConfig()
+}
+
+// runXRayTunnel establishes the VPN connection via XRay-core.
+// Used for "vless-reality", "vless-ws", and all future xray-based protocols.
+// Sends "" to readyCh on success, or an error string on failure.
+func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- string) {
 	// Capture non-sensitive metadata before clearing config
 	serverAddr := fmt.Sprintf("%s:%d", config.ServerAddress, config.ServerPort)
 	protocol := config.Protocol
 
-	// Build XRay-core client configuration for VLESS+REALITY
-	xrayConfig := buildClientXRayConfig(config)
+	// Build XRay-core client configuration based on the requested protocol.
+	// "vless-ws" routes through Cloudflare CDN via WebSocket+TLS.
+	// Everything else defaults to VLESS+REALITY.
+	var xrayConfig map[string]interface{}
+	switch config.Protocol {
+	case "vless-ws":
+		xrayConfig = buildWebSocketXRayConfig(config)
+	default:
+		xrayConfig = buildClientXRayConfig(config)
+	}
 
 	jsonConfig, err := json.Marshal(xrayConfig)
 	if err != nil {

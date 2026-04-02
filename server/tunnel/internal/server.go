@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"sync"
 
-	// XRay-core — import only what VLESS+REALITY needs
+	// XRay-core — import only what VLESS+REALITY/WebSocket needs
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/app/dispatcher"
@@ -18,19 +18,23 @@ import (
 	_ "github.com/xtls/xray-core/proxy/vless/inbound"
 	_ "github.com/xtls/xray-core/transport/internet/reality"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
+	_ "github.com/xtls/xray-core/transport/internet/websocket"
 
 	"go.uber.org/zap"
 )
 
 // TunnelServer manages the VPN tunnel lifecycle.
 // It wraps XRay-core for VLESS+REALITY and exposes a health check endpoint.
+// When websocket is enabled in config, a second xray-core instance is started
+// for the WebSocket CDN inbound (listening on localhost only, proxied by Nginx).
 type TunnelServer struct {
-	config       *Config
-	logger       *zap.Logger
-	xrayInstance *core.Instance
-	healthServer *http.Server
-	mu           sync.Mutex
-	running      bool
+	config          *Config
+	logger          *zap.Logger
+	xrayInstance    *core.Instance
+	wsXrayInstance  *core.Instance
+	healthServer    *http.Server
+	mu              sync.Mutex
+	running         bool
 }
 
 // NewTunnelServer creates a new tunnel server instance.
@@ -94,10 +98,59 @@ func (s *TunnelServer) Start() error {
 		zap.Int("port", s.config.Port),
 	)
 
+	// Optionally start the WebSocket CDN inbound on a separate xray-core instance.
+	// This instance listens on localhost only; Nginx proxies Cloudflare traffic to it.
+	if s.config.WebSocket.Enabled {
+		if err := s.startWebSocketInbound(); err != nil {
+			// WebSocket is optional — log the error but do not abort the REALITY tunnel.
+			s.logger.Error("failed to start websocket inbound — CDN transport unavailable",
+				zap.Error(err),
+				zap.Int("ws_port", s.config.WebSocket.Port),
+			)
+		}
+	}
+
 	// Start health check server
 	s.startHealthServer()
 
 	s.running = true
+	return nil
+}
+
+// startWebSocketInbound creates and starts a second xray-core instance for the
+// WebSocket CDN inbound. It listens on 127.0.0.1:ws_port so that Nginx can
+// proxy Cloudflare WebSocket connections to it.
+//
+// This runs as a separate xray-core instance (not merged into the REALITY one)
+// so that each transport has its own clearly scoped configuration and the
+// WebSocket inbound can be toggled independently without touching REALITY.
+func (s *TunnelServer) startWebSocketInbound() error {
+	wsConfig := s.buildWebSocketConfig()
+
+	jsonConfig, err := json.Marshal(wsConfig)
+	if err != nil {
+		return fmt.Errorf("marshaling websocket xray config: %w", err)
+	}
+
+	xrayPbConfig, err := serial.LoadJSONConfig(bytes.NewReader(jsonConfig))
+	if err != nil {
+		return fmt.Errorf("loading websocket xray config: %w", err)
+	}
+
+	wsInstance, err := core.New(xrayPbConfig)
+	if err != nil {
+		return fmt.Errorf("creating websocket xray instance: %w", err)
+	}
+
+	if err := wsInstance.Start(); err != nil {
+		return fmt.Errorf("starting websocket xray instance: %w", err)
+	}
+
+	s.wsXrayInstance = wsInstance
+	s.logger.Info("websocket CDN inbound active",
+		zap.Int("port", s.config.WebSocket.Port),
+		zap.String("path", s.config.WebSocket.Path),
+	)
 	return nil
 }
 
@@ -115,6 +168,13 @@ func (s *TunnelServer) Stop() error {
 			s.logger.Error("error closing xray instance", zap.Error(err))
 		}
 		s.xrayInstance = nil
+	}
+
+	if s.wsXrayInstance != nil {
+		if err := s.wsXrayInstance.Close(); err != nil {
+			s.logger.Error("error closing websocket xray instance", zap.Error(err))
+		}
+		s.wsXrayInstance = nil
 	}
 
 	if s.healthServer != nil {
@@ -160,6 +220,60 @@ func (s *TunnelServer) buildXRayConfig() map[string]interface{} {
 						"shortIds":    s.config.Reality.ShortIDs,
 					},
 				},
+			},
+		},
+		"outbounds": []map[string]interface{}{
+			{
+				"protocol": "freedom",
+				"tag":      "direct",
+			},
+			{
+				"protocol": "blackhole",
+				"tag":      "block",
+			},
+		},
+	}
+}
+
+// buildWebSocketConfig creates the XRay-core JSON configuration for VLESS over WebSocket CDN.
+//
+// This configuration makes the server accept VLESS traffic through a WebSocket
+// connection. Nginx sits in front and proxies the Cloudflare CDN WebSocket
+// connection to this local port. Key differences from the REALITY inbound:
+//   - network is "ws" (WebSocket), not "tcp"
+//   - No realitySettings — Cloudflare terminates TLS before us
+//   - Listens on 127.0.0.1 only — never exposed directly to the internet
+//   - flow is empty for clients — xtls-rprx-vision is TCP-only
+func (s *TunnelServer) buildWebSocketConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"log": map[string]interface{}{
+			"loglevel": "warning",
+		},
+		"inbounds": []map[string]interface{}{
+			{
+				// Bind on localhost only — Nginx proxies to this port.
+				// Never expose this port to the public internet directly.
+				"listen":   "127.0.0.1",
+				"port":     s.config.WebSocket.Port,
+				"protocol": "vless",
+				"settings": map[string]interface{}{
+					"clients": []map[string]interface{}{
+						{
+							// Accept any UUID — in production, validate against API.
+							// Note: flow must be empty for WebSocket transport.
+							"id":   "00000000-0000-0000-0000-000000000000",
+							"flow": "",
+						},
+					},
+					"decryption": "none",
+				},
+				"streamSettings": map[string]interface{}{
+					"network": "ws",
+					"wsSettings": map[string]interface{}{
+						"path": s.config.WebSocket.Path,
+					},
+				},
+				"tag": "ws-in",
 			},
 		},
 		"outbounds": []map[string]interface{}{
