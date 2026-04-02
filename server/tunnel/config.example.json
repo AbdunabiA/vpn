@@ -1,7 +1,7 @@
 {
   "port": 443,
   "protocol": "vless-reality",
-  "clients": ["xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"],
+  "clients": ["0acceaa5-febd-4a1b-8b55-9ad2c74a9577"],
   "reality": {
     "private_key": "skdzW5MPSEOtk2yk4T3le-zIDcQEhb5hsPu5U-dpVKo",
     "public_key": "OAmaJn5JqNlYdNIulgafHAwZs8MLLuU8MXs9rt26sl0",
