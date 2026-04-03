@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"math/rand"
 
 	"vpnapp/server/api/internal/model"
 	"vpnapp/server/api/internal/repository"
@@ -10,6 +11,27 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+// realityServerNames is a pool of SNI domains for REALITY connections.
+// Russian popular sites are included so the TLS fingerprint looks natural
+// to TSPU when probed from within Russia.
+// Keep in sync with server/tunnel/config.example.json "server_names".
+var realityServerNames = []string{
+	"www.microsoft.com",
+	"microsoft.com",
+	"yandex.ru",
+	"www.yandex.ru",
+	"mail.ru",
+	"www.mail.ru",
+	"vk.com",
+	"www.vk.com",
+	"ok.ru",
+	"www.ok.ru",
+	"sberbank.ru",
+	"www.sberbank.ru",
+	"gosuslugi.ru",
+	"www.gosuslugi.ru",
+}
 
 // ServerConfig is the connection configuration sent to clients.
 type ServerConfig struct {
@@ -26,6 +48,10 @@ type ServerConfig struct {
 	// When present, the client may connect via protocol "amneziawg" instead of VLESS.
 	// AmneziaWG is a WireGuard variant with anti-DPI obfuscation — it does not use xray-core.
 	AWG *AWGClientConfig `json:"awg,omitempty"`
+	// ProtocolPriority is the recommended order of protocols for this client.
+	// Computed from the client's region — Russian users get WebSocket first (CDN bypass),
+	// while others get REALITY first (lower latency).
+	ProtocolPriority []string `json:"protocol_priority,omitempty"`
 }
 
 // AWGClientConfig holds everything the client needs to create an AmneziaWG tunnel.
@@ -166,29 +192,26 @@ func GetServerConfig(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			zap.String("user_id", userID),
 		)
 
-		// REALITY keys must be provisioned in the database — no hardcoded fallback.
-		publicKey := server.RealityPublicKey
-		shortID := server.RealityShortID
-		if publicKey == "" || shortID == "" {
-			logger.Error("server REALITY keys not configured",
-				zap.String("server_id", serverID),
-			)
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error": "server REALITY keys not configured",
-			})
-		}
-
 		config := ServerConfig{
 			ServerAddress: server.IPAddress,
 			ServerPort:    443,
 			Protocol:      server.Protocol,
 			UserID:        userID,
-			Reality: &RealityClientConfig{
-				PublicKey:   publicKey,
-				ShortID:     shortID,
-				ServerName:  "www.microsoft.com",
+		}
+
+		// Include REALITY config when keys are provisioned.
+		// Servers may be AWG-only or WS-only — REALITY is not required.
+		if server.RealityPublicKey != "" && server.RealityShortID != "" {
+			// Pick a random server_name from the pool so each client session
+			// uses a different SNI — makes DPI fingerprinting harder.
+			// Note: math/rand is auto-seeded in Go >= 1.20 (we use 1.22).
+			serverName := realityServerNames[rand.Intn(len(realityServerNames))]
+			config.Reality = &RealityClientConfig{
+				PublicKey:   server.RealityPublicKey,
+				ShortID:     server.RealityShortID,
+				ServerName:  serverName,
 				Fingerprint: "chrome",
-			},
+			}
 		}
 
 		// Include WebSocket CDN config when the server has it configured.
@@ -238,8 +261,83 @@ func GetServerConfig(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			)
 		}
 
+		// Verify the server has at least one protocol configured.
+		if config.Reality == nil && config.WebSocket == nil && config.AWG == nil {
+			logger.Error("server has no protocols configured",
+				zap.String("server_id", serverID),
+			)
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "server has no protocols configured",
+			})
+		}
+
+		// Compute geo-aware protocol priority for the client.
+		// Checks CF-IPCountry header (set by Cloudflare) first, then falls back
+		// to a simple country code heuristic.
+		region := detectClientRegion(c)
+		config.ProtocolPriority = protocolPriorityForRegion(region, config)
+
+		logger.Debug("serving config with protocol priority",
+			zap.String("server_id", serverID),
+			zap.String("region", region),
+			zap.Strings("priority", config.ProtocolPriority),
+		)
+
 		return c.JSON(fiber.Map{
 			"data": config,
 		})
 	}
+}
+
+// detectClientRegion returns an ISO 3166-1 alpha-2 country code for the client.
+func detectClientRegion(c *fiber.Ctx) string {
+	// Cloudflare sets this header automatically — most reliable.
+	if country := c.Get("CF-IPCountry"); country != "" {
+		return country
+	}
+	// Fallback: could integrate MaxMind GeoLite2 here for non-Cloudflare setups.
+	return ""
+}
+
+// protocolPriorityForRegion returns the recommended protocol order based on
+// the client's country and the server's available protocols.
+func protocolPriorityForRegion(region string, cfg ServerConfig) []string {
+	var order []string
+
+	switch region {
+	case "RU":
+		// Russia: CDN WebSocket is hardest to block (would require blocking Cloudflare).
+		// AmneziaWG second (obfuscated UDP). REALITY last (TSPU increasingly detects it).
+		order = []string{"vless-ws", "amneziawg", "vless-reality"}
+	case "IR":
+		// Iran: AmneziaWG works well, WS is second.
+		order = []string{"amneziawg", "vless-ws", "vless-reality"}
+	case "CN":
+		// China: CDN tunneling works best, REALITY second.
+		order = []string{"vless-ws", "vless-reality", "amneziawg"}
+	default:
+		// Uncensored regions: REALITY is fastest (no CDN overhead).
+		order = []string{"vless-reality", "amneziawg", "vless-ws"}
+	}
+
+	// Filter to only include protocols the server actually supports.
+	available := make([]string, 0, 3)
+	for _, p := range order {
+		switch p {
+		case "vless-reality":
+			if cfg.Reality != nil {
+				available = append(available, p)
+			}
+		case "vless-ws":
+			if cfg.WebSocket != nil {
+				available = append(available, p)
+			}
+		case "amneziawg":
+			if cfg.AWG != nil {
+				available = append(available, p)
+			}
+		}
+	}
+
+	return available
 }

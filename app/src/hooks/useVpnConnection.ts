@@ -6,7 +6,8 @@ import * as vpnBridge from '../services/vpnBridge';
 import api from '../services/api';
 import type {ServerConfig} from '../types/api';
 
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const MAX_PROTOCOL_FALLBACKS = 3;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -15,7 +16,46 @@ function getBackoffDelay(attempt: number): number {
   return Math.min(delay, MAX_RECONNECT_DELAY_MS);
 }
 
-// Hook that manages the VPN connection lifecycle.
+/**
+ * Builds an ordered list of protocols to try, based on server capabilities
+ * and priority hints from the API (geo-aware).
+ */
+function buildProtocolQueue(
+  config: ServerConfig,
+  userProtocol: string,
+): string[] {
+  // Start with server-provided priority (geo-aware) or a default
+  const priority = config.protocol_priority ?? [
+    'vless-reality',
+    'amneziawg',
+    'vless-ws',
+  ];
+
+  // Filter to only include protocols the server actually supports
+  const available = priority.filter(p => {
+    if (p === 'vless-reality' && config.reality) return true;
+    if (p === 'vless-ws' && config.websocket) return true;
+    if (p === 'amneziawg' && config.awg) return true;
+    return false;
+  });
+
+  // If user selected a specific protocol (not "auto"), move it to the front
+  if (userProtocol !== 'auto' && available.includes(userProtocol)) {
+    return [
+      userProtocol,
+      ...available.filter(p => p !== userProtocol),
+    ];
+  }
+
+  // Fallback: if no protocols matched (misconfigured server), use the server's default
+  if (available.length === 0) {
+    return [config.protocol];
+  }
+
+  return available;
+}
+
+// Hook that manages the VPN connection lifecycle with protocol fallback.
 export function useVpnConnection() {
   const {
     connectionState,
@@ -38,7 +78,7 @@ export function useVpnConnection() {
   } = useVpnStore();
 
   const {selectedServer} = useServerStore();
-  const {autoReconnect} = useSettingsStore();
+  const {autoReconnect, protocol: userProtocol} = useSettingsStore();
 
   // Track the previous connection state to detect unexpected disconnects
   const prevStateRef = useRef(connectionState);
@@ -46,6 +86,13 @@ export function useVpnConnection() {
   const isManualDisconnectRef = useRef(false);
   // Reconnect timer handle
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Protocol fallback state
+  const fallbackRef = useRef({
+    queue: [] as string[],
+    index: 0,
+    attemptPerProtocol: 0,
+    config: null as ServerConfig | null,
+  });
 
   // Listen for native status change events
   useEffect(() => {
@@ -74,28 +121,93 @@ export function useVpnConnection() {
   }, [currentServer, setConnectionId]);
 
   // Unregister connection from backend on disconnect
-  const unregisterConnection = useCallback(async (id: string) => {
-    try {
-      await api.delete(`/connections/${id}`);
-    } catch (err) {
-      console.error('[VPN Connection] Failed to unregister connection:', err);
-    } finally {
-      setConnectionId(null);
+  const unregisterConnection = useCallback(
+    async (id: string) => {
+      try {
+        await api.delete(`/connections/${id}`);
+      } catch (err) {
+        console.error('[VPN Connection] Failed to unregister connection:', err);
+      } finally {
+        setConnectionId(null);
+      }
+    },
+    [setConnectionId],
+  );
+
+  // Try connecting with the next protocol in the fallback queue
+  const tryNextProtocol = useCallback(async () => {
+    const fb = fallbackRef.current;
+    if (!fb.config || fb.index >= fb.queue.length || fb.index >= MAX_PROTOCOL_FALLBACKS) {
+      // All protocols exhausted
+      useVpnStore.setState({
+        connectionState: 'error',
+        error: 'All protocols blocked',
+      });
+      return;
     }
-  }, [setConnectionId]);
+
+    const nextProtocol = fb.queue[fb.index];
+    console.log(
+      `[VPN Connection] Switching to protocol: ${nextProtocol} (${fb.index + 1}/${fb.queue.length})`,
+    );
+
+    useVpnStore.setState({connectionState: 'switching_protocol'});
+
+    const server = selectedServer || currentServer;
+    if (!server) return;
+
+    try {
+      // Re-fetch config in case server updated priority hints
+      const {data} = await api.get<{data: ServerConfig}>(
+        `/servers/${server.id}/config`,
+      );
+      fb.config = data.data;
+
+      // Rebuild queue from fresh config (server may have changed priorities)
+      const freshQueue = buildProtocolQueue(data.data, userProtocol);
+      const currentProtocolInFresh = freshQueue.indexOf(nextProtocol);
+      if (currentProtocolInFresh >= 0) {
+        fb.queue = freshQueue;
+        fb.index = currentProtocolInFresh;
+      }
+
+      // Override the protocol in the config for the Go tunnel
+      const configWithProtocol = {
+        ...data.data,
+        protocol: nextProtocol,
+      };
+
+      await storeConnect(server, configWithProtocol);
+      fb.attemptPerProtocol = 0;
+    } catch (err) {
+      console.error(
+        `[VPN Connection] Failed with protocol ${nextProtocol}:`,
+        err,
+      );
+      // Move to next protocol
+      fb.index++;
+      fb.attemptPerProtocol = 0;
+      // Small delay before trying next protocol
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(() => tryNextProtocol(), 1000);
+    }
+  }, [selectedServer, currentServer, storeConnect, userProtocol]);
 
   // Watch for state transitions to handle registration and auto-reconnect
   useEffect(() => {
     const prevState = prevStateRef.current;
 
-    // On transition to connected: register device
+    // On transition to connected: register device, reset fallback state
     if (prevState !== 'connected' && connectionState === 'connected') {
       registerConnection();
+      fallbackRef.current.attemptPerProtocol = 0;
     }
 
     // On transition from connected/reconnecting to disconnected: unregister + maybe reconnect
     if (
-      (prevState === 'connected' || prevState === 'reconnecting') &&
+      (prevState === 'connected' ||
+        prevState === 'reconnecting' ||
+        prevState === 'switching_protocol') &&
       connectionState === 'disconnected'
     ) {
       // Unregister the connection
@@ -103,33 +215,51 @@ export function useVpnConnection() {
         unregisterConnection(connectionId);
       }
 
-      // Auto-reconnect if not triggered manually and we have a server
+      // Auto-reconnect with protocol fallback
       if (
         !isManualDisconnectRef.current &&
         autoReconnect &&
-        (selectedServer || currentServer) &&
-        reconnectAttempt < MAX_RECONNECT_ATTEMPTS
+        (selectedServer || currentServer)
       ) {
-        const nextAttempt = reconnectAttempt + 1;
-        const delay = getBackoffDelay(reconnectAttempt);
+        const fb = fallbackRef.current;
+        fb.attemptPerProtocol++;
 
-        setReconnectAttempt(nextAttempt);
-        useVpnStore.setState({connectionState: 'reconnecting'});
+        if (fb.attemptPerProtocol >= MAX_RECONNECT_ATTEMPTS) {
+          // Current protocol is failing — try next one
+          fb.index++;
+          fb.attemptPerProtocol = 0;
 
-        reconnectTimerRef.current = setTimeout(async () => {
-          const server = selectedServer || currentServer;
-          if (!server) {
-            return;
-          }
-          try {
-            const {data} = await api.get<{data: ServerConfig}>(
-              `/servers/${server.id}/config`,
+          if (fb.index < fb.queue.length && fb.index < MAX_PROTOCOL_FALLBACKS) {
+            reconnectTimerRef.current = setTimeout(
+              () => tryNextProtocol(),
+              1000,
             );
-            await storeConnect(server, data.data);
-          } catch (err) {
-            console.error('[VPN Connection] Reconnect attempt failed:', err);
+          } else {
+            useVpnStore.setState({
+              connectionState: 'error',
+              error: 'All protocols blocked',
+            });
           }
-        }, delay);
+        } else {
+          // Retry same protocol with backoff
+          const delay = getBackoffDelay(fb.attemptPerProtocol);
+          setReconnectAttempt(fb.attemptPerProtocol);
+          useVpnStore.setState({connectionState: 'reconnecting'});
+
+          reconnectTimerRef.current = setTimeout(async () => {
+            const server = selectedServer || currentServer;
+            if (!server || !fb.config) return;
+            try {
+              const configWithProtocol = {
+                ...fb.config,
+                protocol: fb.queue[fb.index] || fb.config.protocol,
+              };
+              await storeConnect(server, configWithProtocol);
+            } catch (err) {
+              console.error('[VPN Connection] Reconnect attempt failed:', err);
+            }
+          }, delay);
+        }
       }
     }
 
@@ -145,6 +275,7 @@ export function useVpnConnection() {
     unregisterConnection,
     setReconnectAttempt,
     storeConnect,
+    tryNextProtocol,
   ]);
 
   // Cleanup reconnect timer on unmount
@@ -164,16 +295,37 @@ export function useVpnConnection() {
 
     isManualDisconnectRef.current = false;
 
-    // Fetch real server config from API
     try {
       const {data} = await api.get<{data: ServerConfig}>(
         `/servers/${server.id}/config`,
       );
-      await storeConnect(server, data.data);
+      const config = data.data;
+
+      // Build protocol fallback queue from server hints
+      const queue = buildProtocolQueue(config, userProtocol);
+      fallbackRef.current = {
+        queue,
+        index: 0,
+        attemptPerProtocol: 0,
+        config,
+      };
+
+      // Connect with the first (highest priority) protocol
+      const primaryProtocol = queue[0] || config.protocol;
+      const configWithProtocol = {
+        ...config,
+        protocol: primaryProtocol,
+      };
+
+      console.log(
+        `[VPN Connection] Connecting with protocol: ${primaryProtocol}, queue: [${queue.join(', ')}]`,
+      );
+
+      await storeConnect(server, configWithProtocol);
     } catch (err) {
       console.error('Failed to fetch server config:', err);
     }
-  }, [selectedServer, storeConnect]);
+  }, [selectedServer, storeConnect, userProtocol]);
 
   const disconnect = useCallback(async () => {
     // Mark as manual so the auto-reconnect logic is suppressed
@@ -185,6 +337,7 @@ export function useVpnConnection() {
       reconnectTimerRef.current = null;
     }
     setReconnectAttempt(0);
+    fallbackRef.current = {queue: [], index: 0, attemptPerProtocol: 0, config: null};
 
     await storeDisconnect();
   }, [storeDisconnect, setReconnectAttempt]);
@@ -193,7 +346,10 @@ export function useVpnConnection() {
   const toggle = useCallback(async () => {
     if (connectionState === 'connected') {
       await disconnect();
-    } else if (connectionState === 'disconnected' || connectionState === 'error') {
+    } else if (
+      connectionState === 'disconnected' ||
+      connectionState === 'error'
+    ) {
       await connect();
     }
   }, [connectionState, connect, disconnect]);

@@ -6,7 +6,7 @@ import {useAuthStore} from '../stores/authStore';
 import type {Subscription} from '../types/api';
 
 async function fetchSubscription(): Promise<Subscription> {
-  const {data} = await api.get<{data: Subscription}>('/subscriptions/current');
+  const {data} = await api.get<{data: Subscription}>('/subscription');
   return data.data;
 }
 

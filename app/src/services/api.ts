@@ -3,8 +3,9 @@ import {useAuthStore} from '../stores/authStore';
 
 // Base API URL — points to the Go Fiber backend behind Cloudflare.
 // In development (__DEV__) connects to the local machine; in production uses the live API.
-// TODO: restore __DEV__ ternary before production release
-const API_BASE_URL = 'http://192.168.10.175:3000/api/v1';
+const API_BASE_URL = __DEV__
+  ? 'http://192.168.10.175:3000/api/v1'
+  : 'https://api.genso.tech/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -23,6 +24,25 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Token refresh lock — prevents concurrent 401s from triggering multiple refreshes.
+// Only the first 401 triggers a refresh; all others wait for the result.
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value: unknown) => void;
+  reject: (reason: unknown) => void;
+}> = [];
+
+function processQueue(error: unknown, token: string | null) {
+  failedQueue.forEach(({resolve, reject}) => {
+    if (error) {
+      reject(error);
+    } else {
+      resolve(token);
+    }
+  });
+  failedQueue = [];
+}
+
 // Auto-refresh expired tokens
 api.interceptors.response.use(
   (response) => response,
@@ -30,7 +50,18 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        // Another request is already refreshing — wait for it
+        return new Promise((resolve, reject) => {
+          failedQueue.push({resolve, reject});
+        }).then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          return api(originalRequest);
+        });
+      }
+
       originalRequest._retry = true;
+      isRefreshing = true;
 
       const tokens = useAuthStore.getState().tokens;
       if (tokens?.refresh_token) {
@@ -40,12 +71,23 @@ api.interceptors.response.use(
           });
 
           useAuthStore.getState().updateTokens(data.data);
-          originalRequest.headers.Authorization = `Bearer ${data.data.access_token}`;
+          const newToken = data.data.access_token;
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+
+          processQueue(null, newToken);
           return api(originalRequest);
-        } catch {
-          // Refresh failed — log out
+        } catch (refreshError) {
+          processQueue(refreshError, null);
           useAuthStore.getState().logout();
+          return Promise.reject(refreshError);
+        } finally {
+          isRefreshing = false;
         }
+      } else {
+        // No refresh token — unblock waiters and logout
+        isRefreshing = false;
+        processQueue(error, null);
+        useAuthStore.getState().logout();
       }
     }
 

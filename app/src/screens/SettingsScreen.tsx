@@ -65,7 +65,7 @@ const PROTOCOLS: {value: VpnProtocol; label: string}[] = [
   {value: 'auto', label: 'Auto'},
   {value: 'vless-reality', label: 'VLESS+REALITY'},
   {value: 'amneziawg', label: 'AmneziaWG'},
-  {value: 'websocket', label: 'WebSocket (CDN)'},
+  {value: 'vless-ws', label: 'WebSocket (CDN)'},
 ];
 
 export function SettingsScreen() {

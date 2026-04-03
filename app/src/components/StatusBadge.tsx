@@ -14,6 +14,7 @@ const STATE_COLORS: Record<ConnectionState, string> = {
   connected: colors.success,
   disconnecting: colors.warning,
   reconnecting: colors.warning,
+  switching_protocol: colors.warning,
   error: colors.error,
 };
 
@@ -27,6 +28,7 @@ export function StatusBadge({state}: StatusBadgeProps) {
     connected: t('connection.connected'),
     disconnecting: t('connection.disconnecting'),
     reconnecting: t('connection.reconnecting'),
+    switching_protocol: t('connection.switchingProtocol', {defaultValue: 'Switching protocol...'}),
     error: t('common.error'),
   }[state];
 

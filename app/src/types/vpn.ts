@@ -5,6 +5,7 @@ export type ConnectionState =
   | 'connected'
   | 'disconnecting'
   | 'reconnecting'
+  | 'switching_protocol'
   | 'error';
 
 // Tunnel status received from the native module (Go via gomobile)
@@ -28,7 +29,7 @@ export interface TrafficStats {
 }
 
 // Protocol options available to the user
-export type VpnProtocol = 'auto' | 'vless-reality' | 'amneziawg' | 'websocket';
+export type VpnProtocol = 'auto' | 'vless-reality' | 'amneziawg' | 'vless-ws';
 
 // Server probe result from the Go protocol selector
 export interface ProbeResult {

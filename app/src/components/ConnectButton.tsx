@@ -21,12 +21,13 @@ const STATE_COLORS: Record<ConnectionState, string> = {
   connected: colors.success,
   disconnecting: colors.warning,
   reconnecting: colors.warning,
+  switching_protocol: colors.warning,
   error: colors.error,
 };
 
 export function ConnectButton({state, onPress}: ConnectButtonProps) {
   const {t} = useTranslation();
-  const isTransitioning = state === 'connecting' || state === 'disconnecting' || state === 'reconnecting';
+  const isTransitioning = state === 'connecting' || state === 'disconnecting' || state === 'reconnecting' || state === 'switching_protocol';
   const buttonColor = STATE_COLORS[state];
 
   const label = {
@@ -35,6 +36,7 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
     connected: t('connection.disconnect'),
     disconnecting: t('connection.disconnecting'),
     reconnecting: t('connection.reconnecting'),
+    switching_protocol: t('connection.switchingProtocol', {defaultValue: 'Switching protocol...'}),
     error: t('common.retry'),
   }[state];
 

@@ -7,7 +7,7 @@ export interface ApiResponse<T> {
 
 export interface User {
   id: string;
-  email_hash: string;
+  email_hash?: string;
   full_name: string;
   subscription_tier: 'free' | 'premium' | 'ultimate';
   subscription_expires_at: string | null;
@@ -44,13 +44,32 @@ export interface ServerConfig {
     server_name: string;
     fingerprint: string;
   };
+  websocket?: {
+    host: string;
+    path: string;
+  };
+  awg?: {
+    public_key: string;
+    endpoint: string;
+    allowed_ips: string;
+    jc: number;
+    jmin: number;
+    jmax: number;
+    s1: number;
+    s2: number;
+    h1: number;
+    h2: number;
+    h3: number;
+    h4: number;
+  };
+  protocol_priority?: string[];
 }
 
 export interface Subscription {
-  id: string;
+  id?: string;
   plan: 'free' | 'premium' | 'ultimate';
   is_active: boolean;
-  started_at: string;
-  expires_at: string | null;
+  started_at?: string;
+  expires_at?: string | null;
   max_devices: number;
 }
