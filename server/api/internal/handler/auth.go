@@ -46,9 +46,9 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 			})
 		}
 
-		if req.Email == "" || len(req.Password) < 8 {
+		if req.Email == "" || len(req.Password) < 8 || len(req.Password) > 72 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "email required, password must be at least 8 characters",
+				"error": "email required, password must be 8-72 characters",
 			})
 		}
 
@@ -151,9 +151,9 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		if req.Email == "" || req.Password == "" {
+		if req.Email == "" || req.Password == "" || len(req.Password) > 72 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "email and password required",
+				"error": "email and password required (max 72 chars)",
 			})
 		}
 

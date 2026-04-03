@@ -6,16 +6,32 @@
     "private_key": "skdzW5MPSEOtk2yk4T3le-zIDcQEhb5hsPu5U-dpVKo",
     "public_key": "OAmaJn5JqNlYdNIulgafHAwZs8MLLuU8MXs9rt26sl0",
     "short_ids": ["abcd1234", "ef567890"],
+    "_comment_dest": "dest and server_names intentionally differ — REALITY handles the TLS fingerprint. For production, consider matching dest to the most-used SNI in the deployment region.",
     "dest": "www.microsoft.com:443",
-    "server_names": ["www.microsoft.com", "microsoft.com"]
+    "server_names": [
+      "www.microsoft.com",
+      "microsoft.com",
+      "yandex.ru",
+      "www.yandex.ru",
+      "mail.ru",
+      "www.mail.ru",
+      "vk.com",
+      "www.vk.com",
+      "ok.ru",
+      "www.ok.ru",
+      "sberbank.ru",
+      "www.sberbank.ru",
+      "gosuslugi.ru",
+      "www.gosuslugi.ru"
+    ]
   },
   "websocket": {
-    "enabled": false,
+    "enabled": true,
     "port": 8443,
     "path": "/ws"
   },
   "awg": {
-    "enabled": false,
+    "enabled": true,
     "listen_port": 51820,
     "private_key": "SERVER_AWG_PRIVATE_KEY_BASE64",
     "public_key": "SERVER_AWG_PUBLIC_KEY_BASE64",
@@ -23,12 +39,12 @@
     "jc": 5,
     "jmin": 50,
     "jmax": 1000,
-    "s1": 0,
-    "s2": 0,
-    "h1": 0,
-    "h2": 0,
-    "h3": 0,
-    "h4": 0,
+    "s1": 59,
+    "s2": 59,
+    "h1": 925816387,
+    "h2": 1586498549,
+    "h3": 1367025694,
+    "h4": 2013711510,
     "peers": [
       {
         "public_key": "CLIENT_AWG_PUBLIC_KEY_BASE64",

@@ -40,6 +40,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
 
   connect: async (server: Server, config: ServerConfig) => {
     const {connectionState} = get();
+    // Allow connect from: disconnected, error, reconnecting, switching_protocol.
+    // Block only when already connected or mid-handshake (connecting).
     if (connectionState === 'connected' || connectionState === 'connecting') {
       return;
     }

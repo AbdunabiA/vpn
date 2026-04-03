@@ -39,12 +39,13 @@ const localSocksPort = 10808
 
 // Connection states exposed to the mobile app via TurboModule events.
 const (
-	StateDisconnected  = "disconnected"
-	StateConnecting    = "connecting"
-	StateConnected     = "connected"
-	StateDisconnecting = "disconnecting"
-	StateReconnecting  = "reconnecting"
-	StateError         = "error"
+	StateDisconnected      = "disconnected"
+	StateConnecting        = "connecting"
+	StateConnected         = "connected"
+	StateDisconnecting     = "disconnecting"
+	StateReconnecting      = "reconnecting"
+	StateSwitchingProtocol = "switching_protocol"
+	StateError             = "error"
 )
 
 // ConnectConfig is the configuration passed from the mobile app to establish a tunnel.
