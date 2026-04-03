@@ -8,6 +8,12 @@ on:
       - 'infrastructure/**'
       - '.github/workflows/deploy.yml'
       - 'docker-compose.prod.yml'
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: 'Build both API and Tunnel images'
+        type: boolean
+        default: true
 
 env:
   REGISTRY: ghcr.io
@@ -18,12 +24,13 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      tunnel: ${{ steps.filter.outputs.tunnel }}
+      api: ${{ steps.filter.outputs.api || github.event.inputs.force_all == 'true' }}
+      tunnel: ${{ steps.filter.outputs.tunnel || github.event.inputs.force_all == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
+        if: github.event_name == 'push'
         with:
           filters: |
             api:
@@ -84,7 +91,6 @@ jobs:
   # Deploy to production server
   deploy:
     needs: [changes, build-api, build-tunnel]
-    # Run deploy if at least one build succeeded (or was skipped because unchanged)
     if: |
       always() &&
       needs.build-api.result != 'failure' &&
@@ -116,12 +122,13 @@ jobs:
 
             # Move migrations to expected location
             if [ -d "server/api/migrations" ]; then
+              mkdir -p migrations
               cp -r server/api/migrations/* migrations/ 2>/dev/null || true
               rm -rf server/
             fi
 
             # Login to GHCR
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u abdunabia --password-stdin
 
             # Pull and restart
             docker compose -f docker-compose.prod.yml pull
@@ -130,4 +137,4 @@ jobs:
             # Cleanup
             docker image prune -f
 
-            echo "✓ Deployed at $(date)"
+            echo "Deploy complete: $(date)"
