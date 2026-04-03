@@ -11,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/vpn
+  IMAGE_PREFIX: ghcr.io/abdunabia/vpn
 
 jobs:
   # Detect which services changed
