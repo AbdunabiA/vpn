@@ -78,11 +78,13 @@ func (p *AWGParams) Scan(value interface{}) error {
 
 // Connection tracks an active VPN connection (for concurrent device limiting).
 type Connection struct {
-	ID             string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	UserID         string     `gorm:"not null;index"`
-	ServerID       string     `gorm:"not null;index"`
-	ConnectedAt    time.Time  `gorm:"autoCreateTime"`
-	DisconnectedAt *time.Time `gorm:"index"`
-	BytesUp        int64      `gorm:"default:0"`
-	BytesDown      int64      `gorm:"default:0"`
+	ID              string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	UserID          string     `gorm:"not null;index"`
+	ServerID        string     `gorm:"not null;index"`
+	ConnectedAt     time.Time  `gorm:"autoCreateTime"`
+	DisconnectedAt  *time.Time `gorm:"index"`
+	BytesUp         int64      `gorm:"default:0"`
+	BytesDown       int64      `gorm:"default:0"`
+	Status          string     `json:"status" gorm:"type:varchar(20);not null;default:connected"`
+	LastHeartbeatAt *time.Time `json:"last_heartbeat_at"`
 }

@@ -84,17 +84,27 @@ func main() {
 	// Stripe webhook — public route, authenticated via Stripe-Signature header.
 	api.Post("/webhook/stripe", handler.HandleStripeWebhook(logger, cfg, db))
 
+	// Debug endpoint — logs client-side errors for diagnosis
+	api.Post("/debug/error", func(c *fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.BodyParser(&body); err == nil {
+			logger.Warn("CLIENT ERROR REPORT", zap.Any("body", body))
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+
 	// Protected routes (JWT required)
 	authMiddleware := middleware.AuthRequired(cfg.JWTSecret, redisClient)
 	protected := api.Group("", authMiddleware)
 	protected.Get("/servers", handler.ListServers(logger, db))
-	protected.Get("/servers/:id/config", handler.GetServerConfig(logger, db))
+	protected.Get("/servers/:id/config", handler.GetServerConfig(logger, db, cfg))
 	protected.Get("/subscription", handler.GetSubscription(logger, db))
 	protected.Get("/account", handler.GetAccount(logger, db))
 	protected.Patch("/account", handler.PatchAccount(logger, db))
 	protected.Post("/connections", handler.RegisterConnection(logger, db))
 	protected.Delete("/connections/:id", handler.UnregisterConnection(logger, db))
 	protected.Get("/connections", handler.ListActiveConnections(logger, db))
+	protected.Patch("/connections/:id/heartbeat", handler.HeartbeatConnection(logger, db))
 	protected.Post("/subscription/checkout", handler.CreateCheckoutSession(logger, cfg, db))
 	protected.Post("/subscription/cancel", handler.CancelSubscription(logger, cfg, db))
 

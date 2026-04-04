@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"vpnapp/server/api/internal/config"
 	"vpnapp/server/api/internal/handler"
 	"vpnapp/server/api/internal/model"
 
@@ -60,7 +61,9 @@ func newServersTestDB(t *testing.T) *gorm.DB {
 			connected_at DATETIME,
 			disconnected_at DATETIME,
 			bytes_up INTEGER NOT NULL DEFAULT 0,
-			bytes_down INTEGER NOT NULL DEFAULT 0
+			bytes_down INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'connected',
+			last_heartbeat_at DATETIME
 		);
 	`
 	if err := db.Exec(ddl).Error; err != nil {
@@ -73,6 +76,7 @@ func newServersTestDB(t *testing.T) *gorm.DB {
 // buildServerConfigApp constructs a Fiber app with the GetServerConfig route.
 func buildServerConfigApp(db *gorm.DB, userID, tier string) *fiber.App {
 	log := zap.NewNop()
+	cfg := &config.Config{TunnelVLESSUUID: "00000000-0000-0000-0000-000000000000"}
 	app := fiber.New()
 
 	app.Use(func(c *fiber.Ctx) error {
@@ -81,7 +85,7 @@ func buildServerConfigApp(db *gorm.DB, userID, tier string) *fiber.App {
 		return c.Next()
 	})
 
-	app.Get("/servers/:id/config", handler.GetServerConfig(log, db))
+	app.Get("/servers/:id/config", handler.GetServerConfig(log, db, cfg))
 	return app
 }
 
@@ -283,34 +287,37 @@ func TestGetServerConfig_InactiveServer(t *testing.T) {
 	}
 }
 
-func TestGetServerConfig_DeviceLimitReached(t *testing.T) {
+func TestGetServerConfig_DeviceLimitNotEnforcedAtConfigEndpoint(t *testing.T) {
 	db := newServersTestDB(t)
 	srv := seedServer(t, db, &model.VPNServer{
-		Hostname:    "limit-test-srv",
-		IPAddress:   "10.0.0.1",
-		Region:      "EU",
-		City:        "Madrid",
-		Country:     "Spain",
-		CountryCode: "ES",
-		Protocol:    "vless-reality",
-		IsActive:    true,
+		Hostname:         "limit-test-srv",
+		IPAddress:        "10.0.0.1",
+		Region:           "EU",
+		City:             "Madrid",
+		Country:          "Spain",
+		CountryCode:      "ES",
+		Protocol:         "vless-reality",
+		IsActive:         true,
+		RealityPublicKey: "TestRealityPublicKey123456789012345678901234",
+		RealityShortID:   "abcd1234",
 	})
 
 	userID := "user-at-limit"
 
-	// Insert active connections to reach free tier limit (1 device).
-	for i := 0; i < 1; i++ {
+	// Insert active connections exceeding the free tier limit (1 device).
+	for i := 0; i < 3; i++ {
 		db.Exec(`INSERT INTO connections (id, user_id, server_id, connected_at)
 			VALUES (?, ?, ?, datetime('now'))`,
 			uuid.NewString(), userID, srv.ID)
 	}
 
-	// Free tier allows 1 device; with 1 active connection the limit is reached.
+	// Device limit is NOT enforced at the config endpoint — the client must be
+	// able to fetch config even when over limit. Enforcement happens at POST /connections.
 	app := buildServerConfigApp(db, userID, "free")
 	resp, body := getServerConfig(t, app, srv.ID)
 
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("expected 429, got %d; body: %v", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 (config always served regardless of device count), got %d; body: %v", resp.StatusCode, body)
 	}
 }
 

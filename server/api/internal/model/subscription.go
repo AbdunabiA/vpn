@@ -26,7 +26,7 @@ var PlanLimits = map[string]struct {
 	MaxServers     int // UnlimitedServers (-1) = no cap
 	SpeedLimitMbps int // 0 = unlimited
 }{
-	"free":     {MaxDevices: 1, MaxServers: 3, SpeedLimitMbps: 50},
+	"free":     {MaxDevices: 5, MaxServers: 3, SpeedLimitMbps: 50},
 	"premium":  {MaxDevices: 5, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
 	"ultimate": {MaxDevices: 10, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
 }

@@ -50,7 +50,12 @@ class VpnManager: NSObject {
         }
     }
 
-    /// Connect to VPN with the given configuration
+    // Pending connect completion — resolved when tunnel reports connected/error
+    private var connectCompletion: ((Error?) -> Void)?
+
+    /// Connect to VPN with the given configuration.
+    /// The completion handler is NOT called until the tunnel actually reports
+    /// connected or error via NEVPNStatusDidChange.
     func connect(configJSON: String, completion: @escaping (Error?) -> Void) {
         guard let manager = manager else {
             completion(NSError(domain: "VpnManager", code: 1,
@@ -59,14 +64,14 @@ class VpnManager: NSObject {
         }
 
         // Save config to preferences first
-        manager.saveToPreferences { error in
+        manager.saveToPreferences { [weak self] error in
             if let error = error {
                 completion(error)
                 return
             }
 
             // Load fresh preferences then start
-            manager.loadFromPreferences { error in
+            manager.loadFromPreferences { [weak self] error in
                 if let error = error {
                     completion(error)
                     return
@@ -77,14 +82,18 @@ class VpnManager: NSObject {
 
                     // Pass excluded domains to the Network Extension so it can
                     // inject direct routing rules into the xray config.
-                    if let domainsJson = self.sharedDefaults?.string(forKey: self.excludedDomainsKey),
+                    if let domainsJson = self?.sharedDefaults?.string(forKey: self?.excludedDomainsKey ?? ""),
                        !domainsJson.isEmpty, domainsJson != "[]" {
                         options["excluded_domains"] = domainsJson as NSObject
                     }
 
+                    // Store completion — will be called by observeStatus when tunnel
+                    // reports connected or disconnected/invalid.
+                    self?.connectCompletion = completion
+
                     try manager.connection.startVPNTunnel(options: options)
-                    completion(nil)
                 } catch {
+                    self?.connectCompletion = nil
                     completion(error)
                 }
             }
@@ -219,6 +228,22 @@ class VpnManager: NSObject {
         ) { [weak self] _ in
             guard let self = self else { return }
             let status = self.getStatus()
+
+            // Resolve pending connect completion when tunnel reaches a final state
+            if let completion = self.connectCompletion {
+                switch self.manager?.connection.status {
+                case .connected:
+                    self.connectCompletion = nil
+                    completion(nil)
+                case .disconnected, .invalid:
+                    self.connectCompletion = nil
+                    completion(NSError(domain: "VpnManager", code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Tunnel connection failed"]))
+                default:
+                    break // still transitioning (connecting, reasserting)
+                }
+            }
+
             self.onStatusChanged?(status)
         }
     }
