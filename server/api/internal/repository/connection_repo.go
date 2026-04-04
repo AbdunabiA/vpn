@@ -19,6 +19,9 @@ func CreateConnection(db *gorm.DB, conn *model.Connection) error {
 	if conn.ConnectedAt.IsZero() {
 		conn.ConnectedAt = time.Now()
 	}
+	now := time.Now()
+	conn.LastHeartbeatAt = &now
+	conn.Status = "connecting"
 	result := db.Create(conn)
 	return result.Error
 }
@@ -39,17 +42,20 @@ func CreateConnectionAtomic(db *gorm.DB, conn *model.Connection, maxDevices int)
 	if conn.ConnectedAt.IsZero() {
 		conn.ConnectedAt = time.Now()
 	}
+	now := time.Now()
+	conn.LastHeartbeatAt = &now
+	conn.Status = "connecting"
 
 	// The INSERT … SELECT pattern makes the limit check and the insert atomic.
 	// No row is written when the sub-query count equals or exceeds maxDevices.
 	result := db.Exec(
-		`INSERT INTO connections (id, user_id, server_id, connected_at, bytes_up, bytes_down)
-		 SELECT ?, ?, ?, ?, 0, 0
+		`INSERT INTO connections (id, user_id, server_id, connected_at, bytes_up, bytes_down, status, last_heartbeat_at)
+		 SELECT ?, ?, ?, ?, 0, 0, 'connecting', ?
 		 WHERE (
 		   SELECT COUNT(*) FROM connections
 		   WHERE user_id = ? AND disconnected_at IS NULL
 		 ) < ?`,
-		conn.ID, conn.UserID, conn.ServerID, conn.ConnectedAt,
+		conn.ID, conn.UserID, conn.ServerID, conn.ConnectedAt, conn.LastHeartbeatAt,
 		conn.UserID, maxDevices,
 	)
 	if result.Error != nil {
@@ -102,14 +108,14 @@ func ListActiveConnectionsByUser(db *gorm.DB, userID string) ([]model.Connection
 }
 
 // CleanupStaleConnections marks connections as disconnected when their last heartbeat
-// (connected_at) is older than staleDuration and they still have no disconnected_at.
-// Returns the number of rows affected.
+// (COALESCE(last_heartbeat_at, connected_at)) is older than staleDuration and they
+// still have no disconnected_at. Returns the number of rows affected.
 func CleanupStaleConnections(db *gorm.DB, staleDuration time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-staleDuration)
 	now := time.Now()
 
 	result := db.Model(&model.Connection{}).
-		Where("disconnected_at IS NULL AND connected_at < ?", cutoff).
+		Where("disconnected_at IS NULL AND COALESCE(last_heartbeat_at, connected_at) < ?", cutoff).
 		Updates(map[string]interface{}{
 			"disconnected_at": now,
 		})
@@ -117,6 +123,39 @@ func CleanupStaleConnections(db *gorm.DB, staleDuration time.Duration) (int64, e
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
+}
+
+// CleanupStaleReservations marks connections with status='connecting' as disconnected
+// when they are older than maxAge and have no disconnected_at.
+// These are connections that were reserved but never transitioned to connected status.
+// Returns the number of rows affected.
+func CleanupStaleReservations(db *gorm.DB, maxAge time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-maxAge)
+	now := time.Now()
+	result := db.Model(&model.Connection{}).
+		Where("disconnected_at IS NULL AND status = 'connecting' AND COALESCE(last_heartbeat_at, connected_at) < ?", cutoff).
+		Updates(map[string]interface{}{
+			"disconnected_at": now,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// UpdateHeartbeat refreshes the last_heartbeat_at timestamp for an active connection.
+// Returns ErrNotFound if the connection does not exist or is already disconnected.
+func UpdateHeartbeat(db *gorm.DB, id string) error {
+	result := db.Model(&model.Connection{}).
+		Where("id = ? AND disconnected_at IS NULL", id).
+		Update("last_heartbeat_at", time.Now())
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // FindConnectionByID looks up a connection by UUID.

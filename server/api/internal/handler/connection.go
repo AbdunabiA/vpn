@@ -204,6 +204,43 @@ func UnregisterConnection(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	}
 }
 
+// HeartbeatConnection handles PATCH /connections/:id/heartbeat.
+// Updates last_heartbeat_at for an active connection so the stale cleanup
+// scheduler does not mark it as disconnected.
+func HeartbeatConnection(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		connID := c.Params("id")
+		userID := c.Locals("user_id").(string)
+
+		if connID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "connection id required"})
+		}
+
+		existing, err := repository.FindConnectionByID(db, connID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "connection not found"})
+			}
+			logger.Error("heartbeat lookup failed", zap.String("id", connID), zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
+		}
+
+		if existing.UserID != userID {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+
+		if err := repository.UpdateHeartbeat(db, connID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "connection already disconnected"})
+			}
+			logger.Error("heartbeat update failed", zap.String("id", connID), zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal server error"})
+		}
+
+		return c.Status(fiber.StatusNoContent).Send(nil)
+	}
+}
+
 // ListActiveConnections handles GET /connections.
 // Returns all live (not yet disconnected) connections for the authenticated user.
 func ListActiveConnections(logger *zap.Logger, db *gorm.DB) fiber.Handler {

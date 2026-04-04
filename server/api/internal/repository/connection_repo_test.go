@@ -60,7 +60,9 @@ func newTestDB(t *testing.T) *gorm.DB {
 			connected_at DATETIME,
 			disconnected_at DATETIME,
 			bytes_up INTEGER NOT NULL DEFAULT 0,
-			bytes_down INTEGER NOT NULL DEFAULT 0
+			bytes_down INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'connected',
+			last_heartbeat_at DATETIME
 		);
 	`
 	if err := db.Exec(ddl).Error; err != nil {
@@ -314,8 +316,11 @@ func TestCleanupStaleConnections_MarksOldConnections(t *testing.T) {
 
 	staleTime := time.Now().Add(-3 * time.Hour)
 	if err := db.Model(&model.Connection{}).Where("id = ?", conn.ID).
-		Update("connected_at", staleTime).Error; err != nil {
-		t.Fatalf("failed to backdate connected_at: %v", err)
+		Updates(map[string]interface{}{
+			"connected_at":      staleTime,
+			"last_heartbeat_at": staleTime,
+		}).Error; err != nil {
+		t.Fatalf("failed to backdate connected_at and last_heartbeat_at: %v", err)
 	}
 
 	// Connections older than 2 hours should be cleaned up.

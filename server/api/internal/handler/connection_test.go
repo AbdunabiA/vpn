@@ -66,7 +66,9 @@ func newHandlerTestDB(t *testing.T) *gorm.DB {
 			connected_at DATETIME,
 			disconnected_at DATETIME,
 			bytes_up INTEGER NOT NULL DEFAULT 0,
-			bytes_down INTEGER NOT NULL DEFAULT 0
+			bytes_down INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'connected',
+			last_heartbeat_at DATETIME
 		);
 	`
 	if err := db.Exec(ddl).Error; err != nil {
@@ -115,6 +117,7 @@ func buildApp(db *gorm.DB, userID, tier string) *fiber.App {
 	app.Post("/connections", handler.RegisterConnection(log, db))
 	app.Delete("/connections/:id", handler.UnregisterConnection(log, db))
 	app.Get("/connections", handler.ListActiveConnections(log, db))
+	app.Patch("/connections/:id/heartbeat", handler.HeartbeatConnection(log, db))
 
 	return app
 }

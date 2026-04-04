@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const cleanupInterval = 1 * time.Hour
+const cleanupInterval = 1 * time.Minute
 
 // scheduler is the internal state for the background worker.
 type scheduler struct {
@@ -80,6 +80,7 @@ func Stop() {
 
 // runCleanup deletes expired sessions and stale connections, and logs results.
 func runCleanup(db *gorm.DB, logger *zap.Logger) {
+	// Clean expired sessions
 	count, err := repository.DeleteExpiredSessions(db)
 	if err != nil {
 		logger.Error("session cleanup failed", zap.Error(err))
@@ -87,7 +88,16 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 		logger.Info("expired sessions cleaned up", zap.Int64("count", count))
 	}
 
-	staleCount, err := repository.CleanupStaleConnections(db, 24*time.Hour)
+	// Clean stale reservations (connecting for >2 min)
+	reservationCount, err := repository.CleanupStaleReservations(db, 2*time.Minute)
+	if err != nil {
+		logger.Error("stale reservation cleanup failed", zap.Error(err))
+	} else if reservationCount > 0 {
+		logger.Info("stale reservations cleaned up", zap.Int64("count", reservationCount))
+	}
+
+	// Clean stale connections (no heartbeat for >3 min)
+	staleCount, err := repository.CleanupStaleConnections(db, 3*time.Minute)
 	if err != nil {
 		logger.Error("stale connection cleanup failed", zap.Error(err))
 	} else if staleCount > 0 {
