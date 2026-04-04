@@ -4,8 +4,25 @@ import (
 	"fmt"
 	"sync"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/xjasonlyu/tun2socks/v2/engine"
+	tun2socksLog "github.com/xjasonlyu/tun2socks/v2/log"
 )
+
+func init() {
+	// Override tun2socks logger: tun2socks v2.6.0 uses zap and calls
+	// log.Fatalf on error, which triggers os.Exit(1) via zap's default
+	// fatal hook. We replace it with WriteThenPanic so the Go recover()
+	// in StartTun() can catch it instead of killing the Android process.
+	cfg := zap.NewProductionConfig()
+	cfg.Level.SetLevel(zap.WarnLevel)
+	logger, err := cfg.Build(zap.WithFatalHook(zapcore.WriteThenPanic))
+	if err == nil {
+		tun2socksLog.SetLogger(logger)
+	}
+}
 
 var (
 	tunMu      sync.Mutex
@@ -24,19 +41,32 @@ var (
 //
 // Returns empty string on success, error message on failure.
 // Must be called AFTER Connect() has successfully started xray-core.
-func StartTun(fd int) string {
+func StartTun(fd int) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf("PANIC in StartTun: %v", r)
+		}
+	}()
+
 	tunMu.Lock()
 	defer tunMu.Unlock()
 
+	// If tun2socks is already running, stop it first before restarting.
+	// This prevents deadlocks from engine's internal mutex and avoids
+	// log.Fatalf crashes when the engine is re-entered.
 	if tunRunning {
-		return "tun2socks already running"
+		engine.Stop()
+		tunRunning = false
 	}
 
 	key := new(engine.Key)
 	key.Proxy = socksProxyURL()
 	key.Device = fmt.Sprintf("fd://%d", fd)
-	key.LogLevel = "warn"
-	key.MTU = 1500
+	key.LogLevel = "silent"
+	key.MTU = 1400
+	key.TCPModerateReceiveBuffer = true
+	key.TCPSendBufferSize = "256KB"
+	key.TCPReceiveBufferSize = "256KB"
 
 	engine.Insert(key)
 	engine.Start()

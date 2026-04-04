@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/amnezia-vpn/amneziawg-go/device"
@@ -112,7 +113,16 @@ func buildAWGUAPI(cfg AWGConfig) (string, error) {
 		return "", fmt.Errorf("allowed_ips is required")
 	}
 
-	allowedIPs := cfg.AllowedIPs
+	// Build one "allowed_ip=<cidr>" line per CIDR entry.
+	// The UAPI protocol requires a separate line for each prefix;
+	// a comma-separated list in a single line is not a valid format.
+	var allowedIPLines string
+	for _, cidr := range strings.Split(cfg.AllowedIPs, ",") {
+		cidr = strings.TrimSpace(cidr)
+		if cidr != "" {
+			allowedIPLines += fmt.Sprintf("allowed_ip=%s\n", cidr)
+		}
+	}
 
 	lines := fmt.Sprintf(
 		"private_key=%s\n"+
@@ -126,8 +136,7 @@ func buildAWGUAPI(cfg AWGConfig) (string, error) {
 			"underload_packet_magic_header=%d\n"+
 			"transport_packet_magic_header=%d\n"+
 			"public_key=%s\n"+
-			"endpoint=%s\n"+
-			"allowed_ip=%s\n",
+			"endpoint=%s\n",
 		cfg.PrivateKey,
 		cfg.Jc,
 		cfg.Jmin,
@@ -140,8 +149,8 @@ func buildAWGUAPI(cfg AWGConfig) (string, error) {
 		cfg.H4,
 		cfg.PublicKey,
 		cfg.Endpoint,
-		allowedIPs,
 	)
+	lines += allowedIPLines
 
 	if cfg.PresharedKey != "" {
 		lines += fmt.Sprintf("preshared_key=%s\n", cfg.PresharedKey)

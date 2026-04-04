@@ -105,20 +105,23 @@ export function useVpnConnection() {
     };
   }, [updateStatus, updateStats]);
 
-  // Register connection with backend after successful connect
-  const registerConnection = useCallback(async () => {
-    if (!currentServer) {
-      return;
-    }
-    try {
-      const {data} = await api.post<{data: {id: string}}>('/connections', {
-        server_id: currentServer.id,
-      });
-      setConnectionId(data.data.id);
-    } catch (err) {
-      console.error('[VPN Connection] Failed to register connection:', err);
-    }
-  }, [currentServer, setConnectionId]);
+  // Reserve a connection slot on the backend. Returns the connection ID or null on failure.
+  const reserveConnection = useCallback(
+    async (serverId: string): Promise<string | null> => {
+      try {
+        const res = await api.post<{data: {id: string}}>('/connections', {
+          server_id: serverId,
+        });
+        const id = res.data.data.id;
+        setConnectionId(id);
+        return id;
+      } catch (err) {
+        console.error('[VPN Connection] Failed to reserve connection slot:', err);
+        return null;
+      }
+    },
+    [setConnectionId],
+  );
 
   // Unregister connection from backend on disconnect
   const unregisterConnection = useCallback(
@@ -157,6 +160,18 @@ export function useVpnConnection() {
     if (!server) return;
 
     try {
+      // Ensure we have a connection slot reserved
+      if (!useVpnStore.getState().connectionId) {
+        const reserved = await reserveConnection(server.id);
+        if (!reserved) {
+          useVpnStore.setState({
+            connectionState: 'error',
+            error: 'Device limit reached',
+          });
+          return;
+        }
+      }
+
       // Re-fetch config in case server updated priority hints
       const {data} = await api.get<{data: ServerConfig}>(
         `/servers/${server.id}/config`,
@@ -191,15 +206,14 @@ export function useVpnConnection() {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = setTimeout(() => tryNextProtocol(), 1000);
     }
-  }, [selectedServer, currentServer, storeConnect, userProtocol]);
+  }, [selectedServer, currentServer, storeConnect, userProtocol, reserveConnection]);
 
-  // Watch for state transitions to handle registration and auto-reconnect
+  // Watch for state transitions to handle auto-reconnect
   useEffect(() => {
     const prevState = prevStateRef.current;
 
-    // On transition to connected: register device, reset fallback state
+    // On transition to connected: reset fallback state (connection was already reserved before tunnel connect)
     if (prevState !== 'connected' && connectionState === 'connected') {
-      registerConnection();
       fallbackRef.current.attemptPerProtocol = 0;
     }
 
@@ -250,6 +264,17 @@ export function useVpnConnection() {
             const server = selectedServer || currentServer;
             if (!server || !fb.config) return;
             try {
+              // Ensure we have a connection slot reserved for the reconnect
+              if (!useVpnStore.getState().connectionId) {
+                const reserved = await reserveConnection(server.id);
+                if (!reserved) {
+                  useVpnStore.setState({
+                    connectionState: 'error',
+                    error: 'Device limit reached',
+                  });
+                  return;
+                }
+              }
               const configWithProtocol = {
                 ...fb.config,
                 protocol: fb.queue[fb.index] || fb.config.protocol,
@@ -271,8 +296,8 @@ export function useVpnConnection() {
     reconnectAttempt,
     currentServer,
     selectedServer,
-    registerConnection,
     unregisterConnection,
+    reserveConnection,
     setReconnectAttempt,
     storeConnect,
     tryNextProtocol,
@@ -287,21 +312,48 @@ export function useVpnConnection() {
     };
   }, []);
 
+  // Send heartbeat every 60s while connected
+  useEffect(() => {
+    if (connectionState !== 'connected' || !connectionId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        await api.patch(`/connections/${connectionId}/heartbeat`);
+      } catch (err) {
+        console.error('[VPN Connection] Heartbeat failed:', err);
+      }
+    }, 60_000);
+
+    // Send initial heartbeat immediately on connect
+    api.patch(`/connections/${connectionId}/heartbeat`).catch(() => {});
+
+    return () => clearInterval(interval);
+  }, [connectionState, connectionId]);
+
   const connect = useCallback(async () => {
     const server = selectedServer;
-    if (!server) {
-      return;
-    }
+    if (!server) return;
 
     isManualDisconnectRef.current = false;
 
     try {
+      // 1. Fetch server config
       const {data} = await api.get<{data: ServerConfig}>(
         `/servers/${server.id}/config`,
       );
       const config = data.data;
 
-      // Build protocol fallback queue from server hints
+      // 2. Reserve connection slot BEFORE connecting tunnel
+      const reservedConnectionId = await reserveConnection(server.id);
+      if (!reservedConnectionId) {
+        useVpnStore.setState({
+          connectionState: 'error',
+          error: 'Device limit reached',
+        });
+        return;
+      }
+
+      // 3. Build protocol queue and connect tunnel
       const queue = buildProtocolQueue(config, userProtocol);
       fallbackRef.current = {
         queue,
@@ -310,7 +362,6 @@ export function useVpnConnection() {
         config,
       };
 
-      // Connect with the first (highest priority) protocol
       const primaryProtocol = queue[0] || config.protocol;
       const configWithProtocol = {
         ...config,
@@ -321,11 +372,26 @@ export function useVpnConnection() {
         `[VPN Connection] Connecting with protocol: ${primaryProtocol}, queue: [${queue.join(', ')}]`,
       );
 
-      await storeConnect(server, configWithProtocol);
+      try {
+        await storeConnect(server, configWithProtocol);
+      } catch (err) {
+        // 4. Tunnel failed — release reservation
+        if (reservedConnectionId) {
+          try {
+            await api.delete(`/connections/${reservedConnectionId}`);
+          } catch {}
+          setConnectionId(null);
+        }
+        throw err;
+      }
     } catch (err) {
-      console.error('Failed to fetch server config:', err);
+      console.error('Failed to connect:', err);
+      useVpnStore.setState({
+        connectionState: 'error',
+        error: err instanceof Error ? err.message : 'Connection failed',
+      });
     }
-  }, [selectedServer, storeConnect, userProtocol]);
+  }, [selectedServer, storeConnect, userProtocol, reserveConnection]);
 
   const disconnect = useCallback(async () => {
     // Mark as manual so the auto-reconnect logic is suppressed
@@ -339,8 +405,14 @@ export function useVpnConnection() {
     setReconnectAttempt(0);
     fallbackRef.current = {queue: [], index: 0, attemptPerProtocol: 0, config: null};
 
+    // Unregister BEFORE store clears tunnel — read fresh ID from store
+    const currentId = useVpnStore.getState().connectionId;
+    if (currentId) {
+      await unregisterConnection(currentId);
+    }
+
     await storeDisconnect();
-  }, [storeDisconnect, setReconnectAttempt]);
+  }, [storeDisconnect, setReconnectAttempt, unregisterConnection]);
 
   // Toggle: connect if disconnected, disconnect if connected
   const toggle = useCallback(async () => {
