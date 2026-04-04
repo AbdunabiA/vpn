@@ -21,6 +21,7 @@ import (
 
 	// XRay-core — import only what VLESS+REALITY/WebSocket client needs
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/app/dispatcher"
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
 	_ "github.com/xtls/xray-core/app/proxyman/outbound"
@@ -31,7 +32,6 @@ import (
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
 	_ "github.com/xtls/xray-core/transport/internet/tls"
 	_ "github.com/xtls/xray-core/transport/internet/websocket"
-	_ "github.com/xtls/xray-core/infra/conf/serial"
 )
 
 // localSocksPort is the port xray-core SOCKS5 proxy listens on.
@@ -264,6 +264,22 @@ func GetStatus() string {
 //
 // Sends "" to readyCh on success, or an error string on failure.
 func (m *tunnelManager) runTunnel(config ConnectConfig, readyCh chan<- string) {
+	// Catch Go panics and convert to error strings so the app doesn't SIGSEGV.
+	defer func() {
+		if r := recover(); r != nil {
+			errMsg := fmt.Sprintf("PANIC in runTunnel: %v", r)
+			errStatus := TunnelStatus{State: StateError, Error: errMsg}
+			m.mu.Lock()
+			m.setStatus(errStatus)
+			m.mu.Unlock()
+			m.notifyStatus(errStatus)
+			select {
+			case readyCh <- errMsg:
+			default:
+			}
+		}
+	}()
+
 	if config.Protocol == "amneziawg" {
 		m.runAWGTunnel(config, readyCh)
 		return
@@ -370,8 +386,10 @@ func (m *tunnelManager) runXRayTunnel(config ConnectConfig, readyCh chan<- strin
 	// Register Android socket protection (once) before creating xray instance
 	registerDialerController()
 
-	// Load and create XRay-core instance
-	pbConfig, err := core.LoadConfig("json", bytes.NewReader(jsonConfig))
+	// Load and create XRay-core instance.
+	// Use serial.LoadJSONConfig directly instead of core.LoadConfig("json", ...)
+	// because the init()-based format registration is unreliable with gomobile builds.
+	pbConfig, err := serial.LoadJSONConfig(bytes.NewReader(jsonConfig))
 	// Zero the JSON config buffer (contains credentials)
 	for i := range jsonConfig {
 		jsonConfig[i] = 0

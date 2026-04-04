@@ -5,7 +5,7 @@ import {useAuthStore} from '../stores/authStore';
 // In development (__DEV__) connects to the local machine; in production uses the live API.
 const API_BASE_URL = __DEV__
   ? 'http://192.168.10.175:3000/api/v1'
-  : 'https://api.genso.tech/api/v1';
+  : 'https://vpnapi.mydayai.uz:9443/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,

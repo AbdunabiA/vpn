@@ -17,8 +17,18 @@ import tunnel.StatusCallback
 /**
  * Android VpnService that manages the VPN tunnel via the Go tunnel library.
  *
+ * Runs in the ":vpn" process (declared in AndroidManifest). This means a
+ * native crash inside gvisor/tun2socks only kills the VPN process — the main
+ * app process stays alive and receives a final broadcast before the process dies.
+ *
+ * Inter-process communication:
+ *   Main -> VPN : explicit Intents delivered to onStartCommand (ACTION_CONNECT,
+ *                 ACTION_DISCONNECT, ACTION_SET_KILL_SWITCH, ACTION_SET_EXCLUDED_APPS)
+ *   VPN -> Main : sendBroadcast with setPackage(packageName) so only our app
+ *                 receives the broadcast, no LocalBroadcastManager needed cross-process.
+ *
  * Flow:
- *   React Native -> VpnTurboModule -> TunnelVpnService -> Go tunnel (xray-core)
+ *   React Native -> VpnTurboModule -> Intent -> TunnelVpnService -> Go tunnel (xray-core)
  *
  * The Go tunnel opens a local SOCKS5 proxy on localhost:10808.
  * tun2socks bridges the TUN interface to that SOCKS5 proxy.
@@ -32,47 +42,49 @@ import tunnel.StatusCallback
 class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var isRunning = false
+    @Volatile private var isRunning = false
+    @Volatile private var isStarting = false
+
+    private val debugExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     // True while the TUN interface is alive but the tunnel backend has stopped.
     // Traffic is effectively blackholed in this state.
     private var killSwitchActive = false
 
     // Loaded from SharedPreferences on start; can be updated at runtime via
-    // setKillSwitch() called from VpnTurboModule.
+    // ACTION_SET_KILL_SWITCH Intent sent from the main process.
     private var killSwitchEnabled = false
 
     // Package names excluded from the VPN (split tunneling).
-    // Loaded from SharedPreferences on start; updated via setExcludedApps().
+    // Loaded from SharedPreferences on start; updated via ACTION_SET_EXCLUDED_APPS.
     private var excludedApps: List<String> = emptyList()
 
     companion object {
         private const val TAG = "TunnelVpnService"
         private const val CHANNEL_ID = "vpn_channel"
         private const val NOTIFICATION_ID = 1
+
+        // Intent actions for commands FROM the main process
         const val ACTION_CONNECT = "com.vpnapp.CONNECT"
         const val ACTION_DISCONNECT = "com.vpnapp.DISCONNECT"
-        const val EXTRA_CONFIG_JSON = "config_json"
+        const val ACTION_SET_KILL_SWITCH = "com.vpnapp.SET_KILL_SWITCH"
+        const val ACTION_SET_EXCLUDED_APPS = "com.vpnapp.SET_EXCLUDED_APPS"
 
+        // Intent extras
+        const val EXTRA_CONFIG_JSON = "config_json"
+        const val EXTRA_KILL_SWITCH_ENABLED = "enabled"
+        const val EXTRA_APPS_JSON = "apps_json"
+
+        // Broadcast actions TO the main process
+        const val BROADCAST_VPN_STATUS = "com.vpnapp.VPN_STATUS"
+        const val BROADCAST_VPN_CONNECT_RESULT = "com.vpnapp.VPN_CONNECT_RESULT"
+        const val EXTRA_STATUS_JSON = "status_json"
+        const val EXTRA_SUCCESS = "success"
+
+        // SharedPreferences
         const val PREFS_NAME = "vpn_prefs"
         private const val PREF_KILL_SWITCH = "kill_switch_enabled"
         const val PREF_EXCLUDED_APPS = "excluded_apps_json"
-
-        // Singleton reference for the TurboModule to interact with
-        var instance: TunnelVpnService? = null
-            private set
-    }
-
-    /**
-     * Updates the set of apps that bypass the VPN tunnel.
-     * If the tunnel is currently running the TUN interface is rebuilt so the
-     * new exclusion list takes effect without a full VPN reconnect.
-     */
-    fun setExcludedApps(apps: List<String>) {
-        excludedApps = apps
-        if (isRunning) {
-            rebuildTunInterface()
-        }
     }
 
     // --- ProtectSocket interface (gomobile generated) ---
@@ -85,9 +97,10 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     // Receives tunnel state changes from the Go library.
     override fun onStatusChanged(statusJSON: String?) {
         statusJSON?.let { json ->
-            // Update notification based on parsed state
+            sendDebugEvent("native_status_callback", json)
             try {
                 val state = JSONObject(json).optString("state", "")
+                val error = JSONObject(json).optString("error", "")
                 when (state) {
                     "connected" -> {
                         // Tunnel (re)connected — clear any active kill switch state
@@ -98,26 +111,33 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                         updateNotification("Connected")
                     }
                     "connecting" -> updateNotification("Connecting...")
-                    "disconnecting" -> updateNotification("Disconnecting...")
+                    "disconnecting" -> {
+                        sendDebugEvent("status_disconnecting", "isRunning=$isRunning killSwitchActive=$killSwitchActive")
+                        updateNotification("Disconnecting...")
+                    }
+                    "disconnected" -> {
+                        sendDebugEvent("status_disconnected", "isRunning=$isRunning killSwitchActive=$killSwitchActive")
+                        updateNotification("Disconnected")
+                    }
                     "error" -> {
+                        sendDebugEvent("status_error", "error=$error isRunning=$isRunning killSwitchEnabled=$killSwitchEnabled")
                         // Unexpected tunnel error from xray-core. If kill switch is
                         // enabled engage it now; otherwise just forward the event.
                         if (killSwitchEnabled && isRunning) {
                             Log.w(TAG, "Tunnel error detected — engaging kill switch")
                             stopVpn(isManual = false)
-                            return // stopVpn sends its own status event
+                            return // stopVpn sends its own status broadcast
                         }
                         updateNotification("Error")
                     }
                 }
             } catch (_: Exception) { }
-            VpnTurboModule.sendStatusEvent(json)
+            broadcastStatus(json)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
         createNotificationChannel()
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         // Restore persisted kill switch preference
@@ -133,34 +153,54 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        sendDebugEvent("onStartCommand", "action=${intent?.action} isRunning=$isRunning")
         when (intent?.action) {
             ACTION_CONNECT -> {
                 val configJson = intent.getStringExtra(EXTRA_CONFIG_JSON) ?: ""
                 startVpn(configJson)
             }
             ACTION_DISCONNECT -> {
-                // Manual disconnect — always tear down everything regardless of kill switch
+                sendDebugEvent("onStartCommand_disconnect", "manual disconnect requested")
                 stopVpn(isManual = true)
+            }
+            ACTION_SET_KILL_SWITCH -> {
+                val enabled = intent.getBooleanExtra(EXTRA_KILL_SWITCH_ENABLED, false)
+                applyKillSwitchSetting(enabled)
+            }
+            ACTION_SET_EXCLUDED_APPS -> {
+                val appsJson = intent.getStringExtra(EXTRA_APPS_JSON) ?: "[]"
+                applyExcludedApps(appsJson)
             }
         }
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        sendDebugEvent("onTaskRemoved", "isRunning=$isRunning — app swiped from recents, service continues")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onRevoke() {
+        sendDebugEvent("onRevoke", "isRunning=$isRunning — VPN revoked by system/another app")
+        stopVpn(isManual = false)
+    }
+
     override fun onDestroy() {
+        sendDebugEvent("onDestroy", "isRunning=$isRunning killSwitchActive=$killSwitchActive")
         // System-initiated destroy: honour kill switch (isManual = false).
         // If the service was already stopped cleanly this is a no-op.
         stopVpn(isManual = false)
-        instance = null
         super.onDestroy()
     }
 
-    // MARK: - Kill Switch API
+    // MARK: - Settings applied from main process
 
     /**
      * Enable or disable the kill switch. The preference is persisted in
      * SharedPreferences so it survives service restarts.
+     * Called when ACTION_SET_KILL_SWITCH arrives from the main process.
      */
-    fun setKillSwitch(enabled: Boolean) {
+    private fun applyKillSwitchSetting(enabled: Boolean) {
         killSwitchEnabled = enabled
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -170,10 +210,55 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     }
 
     /**
-     * Returns true when the TUN interface is alive but the tunnel backend has
-     * stopped — i.e. the kill switch is actively blackholing traffic.
+     * Updates the set of apps that bypass the VPN tunnel.
+     * If the tunnel is currently running the TUN interface is rebuilt so the
+     * new exclusion list takes effect without a full VPN reconnect.
+     * Called when ACTION_SET_EXCLUDED_APPS arrives from the main process.
      */
-    fun isKillSwitchActive(): Boolean = killSwitchActive
+    private fun applyExcludedApps(appsJson: String) {
+        try {
+            val arr = org.json.JSONArray(appsJson)
+            excludedApps = (0 until arr.length()).map { arr.getString(it) }
+            // Persist so we survive a service restart
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_EXCLUDED_APPS, appsJson)
+                .apply()
+            if (isRunning) {
+                rebuildTunInterface()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "applyExcludedApps parse error: ${e.message}")
+        }
+    }
+
+    // MARK: - Broadcast helpers (VPN process -> Main process)
+
+    /**
+     * Send a VPN status update to the main process.
+     * Uses sendBroadcast with setPackage so only our own app receives it.
+     */
+    private fun broadcastStatus(statusJson: String) {
+        val intent = Intent(BROADCAST_VPN_STATUS).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_STATUS_JSON, statusJson)
+        }
+        sendBroadcast(intent)
+    }
+
+    /**
+     * Notify the main process that the tunnel is fully connected and the JS
+     * connect() promise can be resolved.
+     */
+    private fun broadcastConnectResult(success: Boolean) {
+        val intent = Intent(BROADCAST_VPN_CONNECT_RESULT).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_SUCCESS, success)
+        }
+        sendBroadcast(intent)
+    }
+
+    // MARK: - VPN lifecycle
 
     /**
      * Starts the VPN tunnel:
@@ -183,7 +268,24 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
      * 4. Start tun2socks (bridges TUN <-> SOCKS5)
      */
     private fun startVpn(configJson: String) {
-        if (isRunning) return
+        if (isRunning || isStarting) {
+            sendDebugEvent("startVpn_skipped", "isRunning=$isRunning isStarting=$isStarting")
+            return
+        }
+
+        // Check Go tunnel state — if already connected, skip.
+        // This prevents the race where JS fires a second connect
+        // before the first startVpn finishes setting isRunning=true.
+        try {
+            val goStatus = Tunnel.getStatus()
+            val goState = JSONObject(goStatus).optString("state", "")
+            if (goState == "connected" || goState == "connecting") {
+                sendDebugEvent("startVpn_skipped_go_state", "goState=$goState")
+                return
+            }
+        } catch (_: Throwable) { }
+
+        isStarting = true
 
         // If the kill switch was active (TUN alive, tunnel down), close the
         // stale TUN fd before establishing a fresh one for the new connection.
@@ -198,27 +300,35 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
             killSwitchActive = false
         }
 
-        Log.i(TAG, "Starting VPN tunnel")
+        Log.i(TAG, "Starting VPN tunnel, config length=${configJson.length}")
+        writeCrashBreadcrumb("startVpn entered, config length=${configJson.length}")
         startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
 
         try {
             // 1. Register socket protection BEFORE connecting
+            writeCrashBreadcrumb("step1: setProtectCallback")
             Tunnel.setProtectCallback(this)
 
             // 2. Register status callback
+            writeCrashBreadcrumb("step2: setStatusCallback")
             Tunnel.setStatusCallback(this)
 
             // 3. Start the Go tunnel (xray-core SOCKS5 proxy)
+            writeCrashBreadcrumb("step3: calling Tunnel.connect()")
             val connectResult = Tunnel.connect(configJson)
+            writeCrashBreadcrumb("step4: Tunnel.connect() returned: '$connectResult'")
             if (connectResult.isNotEmpty()) {
                 Log.e(TAG, "Tunnel connect error: $connectResult")
-                VpnTurboModule.sendStatusEvent(JSONObject().put("state", "error").put("error", connectResult).toString())
+                broadcastStatus(JSONObject().put("state", "error").put("error", connectResult).toString())
+                broadcastConnectResult(success = false)
+                isStarting = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return
             }
 
             // 4. Create TUN interface AFTER xray starts (so its sockets are already protected)
+            writeCrashBreadcrumb("step5: building TUN interface")
             val builder = Builder()
                 .setSession("VPN App")
                 .addAddress("10.0.0.2", 32)           // IPv4 tunnel address
@@ -227,12 +337,21 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                 .addRoute("::", 0)                     // Route all IPv6 (prevents IPv6 leak)
                 .addDnsServer("1.1.1.1")
                 .addDnsServer("8.8.8.8")
-                .setMtu(1500)
+                .setMtu(1400)
                 // setBlocking(true) makes the TUN read block in the kernel. When kill
                 // switch is active and nothing is reading from the fd, packets stall in
                 // the kernel buffer instead of being dropped immediately, which is the
                 // safer blackhole behaviour we want.
                 .setBlocking(killSwitchEnabled)
+
+            // Exclude our own app so API calls to vpnapi.mydayai.uz bypass the tunnel.
+            // Without this, the app's HTTP traffic gets routed through xray, which
+            // breaks connectivity to the API server (same host as the VPN endpoint).
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to exclude own package from VPN", e)
+            }
 
             // Apply split tunneling exclusions — these apps will bypass the VPN.
             for (pkg in excludedApps) {
@@ -243,11 +362,15 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                 }
             }
 
+            writeCrashBreadcrumb("step6: calling builder.establish()")
             vpnInterface = builder.establish()
+            writeCrashBreadcrumb("step7: establish() returned, fd=${vpnInterface?.fd}")
 
             if (vpnInterface == null) {
                 Log.e(TAG, "Failed to establish VPN interface")
                 Tunnel.disconnect()
+                broadcastConnectResult(success = false)
+                isStarting = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return
@@ -255,24 +378,39 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
 
             // 5. Start tun2socks: pipes TUN packets to SOCKS5 proxy
             val tunFd = vpnInterface!!.fd
+            writeCrashBreadcrumb("step8: calling Tunnel.startTun(fd=$tunFd)")
             val tunResult = Tunnel.startTun(tunFd.toLong())
+            writeCrashBreadcrumb("step9: startTun returned: '$tunResult'")
             if (tunResult.isNotEmpty()) {
                 Log.e(TAG, "tun2socks error: $tunResult")
                 Tunnel.disconnect()
                 vpnInterface?.close()
                 vpnInterface = null
+                broadcastConnectResult(success = false)
+                isStarting = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return
             }
 
             isRunning = true
+            isStarting = false
+            writeCrashBreadcrumb("step10: VPN FULLY CONNECTED")
             updateNotification("Connected")
+            // Notify the main process that TUN + tun2socks are fully ready so the
+            // JS connect() promise can be resolved.
+            broadcastConnectResult(success = true)
             Log.i(TAG, "VPN tunnel established")
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start VPN", e)
-            VpnTurboModule.sendStatusEvent(JSONObject().put("state", "error").put("error", e.message ?: "unknown error").toString())
+        } catch (e: Throwable) {
+            isStarting = false
+            Log.e(TAG, "Failed to start VPN: ${e.javaClass.name}: ${e.message}", e)
+            try {
+                broadcastStatus(
+                    JSONObject().put("state", "error").put("error", "${e.javaClass.name}: ${e.message}").toString()
+                )
+                broadcastConnectResult(success = false)
+            } catch (_: Throwable) { }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -294,6 +432,8 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
      *   - Tear down everything: tun2socks -> xray -> TUN -> stopSelf().
      */
     private fun stopVpn(isManual: Boolean = false) {
+        sendDebugEvent("stopVpn_called", "isManual=$isManual isRunning=$isRunning killSwitchActive=$killSwitchActive stackTrace=${Thread.currentThread().stackTrace.take(8).joinToString(" <- ") { "${it.className}.${it.methodName}:${it.lineNumber}" }}")
+
         // Allow a manual disconnect to force-close even when we are in kill
         // switch active state (killSwitchActive = true, isRunning = false).
         if (!isRunning && !killSwitchActive) return
@@ -303,15 +443,25 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
         Log.i(TAG, "Stopping VPN tunnel (isManual=$isManual, killSwitch=$applyKillSwitch)")
 
         // Always stop the tunnel backend — no traffic must pass through xray.
-        Tunnel.stopTun()
-        Tunnel.disconnect()
+        // Wrapped in try/catch because tun2socks engine.Stop() can panic
+        // (via logrus.Fatalf -> our panic handler).
+        try {
+            Tunnel.stopTun()
+        } catch (e: Throwable) {
+            Log.e(TAG, "stopTun error: ${e.message}")
+        }
+        try {
+            Tunnel.disconnect()
+        } catch (e: Throwable) {
+            Log.e(TAG, "disconnect error: ${e.message}")
+        }
 
         if (applyKillSwitch) {
             // Keep TUN alive to blackhole all traffic. The fd remains open and
             // the kernel routes are still in place, but nothing reads from the fd.
             isRunning = false
             killSwitchActive = true
-            VpnTurboModule.sendStatusEvent(
+            broadcastStatus(
                 """{"state":"kill_switch","server_addr":"","protocol":"","connected_at":0,"bytes_up":0,"bytes_down":0}"""
             )
             updateNotification("Kill Switch Active")
@@ -328,7 +478,7 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
 
             isRunning = false
             killSwitchActive = false
-            VpnTurboModule.sendStatusEvent(
+            broadcastStatus(
                 """{"state":"disconnected","server_addr":"","protocol":"","connected_at":0,"bytes_up":0,"bytes_down":0}"""
             )
 
@@ -336,8 +486,6 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
             stopSelf()
         }
     }
-
-    fun isActive(): Boolean = isRunning
 
     /**
      * Rebuilds the TUN interface with the current excludedApps list while the
@@ -374,8 +522,13 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                 .addRoute("::", 0)
                 .addDnsServer("1.1.1.1")
                 .addDnsServer("8.8.8.8")
-                .setMtu(1500)
+                .setMtu(1400)
                 .setBlocking(killSwitchEnabled)
+
+            // Exclude own app from VPN (same as in startVpn)
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (_: Exception) { }
 
             for (pkg in excludedApps) {
                 try {
@@ -410,14 +563,17 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
         }
     }
 
+    // MARK: - Notifications
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "VPN Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Shows VPN connection status"
+                setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
@@ -446,5 +602,48 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     private fun updateNotification(status: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(status))
+    }
+
+    // MARK: - Diagnostics
+
+    /**
+     * Write a breadcrumb to a file so we can see the last step before a native crash.
+     * The file is in filesDir which is shared across processes within the same app,
+     * so the main process can read it on next startup.
+     */
+    private fun writeCrashBreadcrumb(msg: String) {
+        Log.i(TAG, "BREADCRUMB: $msg")
+        try {
+            val file = java.io.File(filesDir, "crash_breadcrumb.txt")
+            if (file.length() > 50_000) file.writeText("")
+            file.appendText("${System.currentTimeMillis()} $msg\n")
+        } catch (_: Throwable) { }
+    }
+
+    /**
+     * Send a debug event to the API in real-time (fire-and-forget).
+     * HTTP calls work fine from the VPN process since the tunnel's own sockets
+     * are protected via the ProtectSocket callback.
+     */
+    private fun sendDebugEvent(action: String, detail: String) {
+        Log.i(TAG, "DEBUG_EVENT: $action — $detail")
+        debugExecutor.execute {
+            try {
+                val body = org.json.JSONObject().apply {
+                    put("error", detail)
+                    put("action", action)
+                }
+                val url = java.net.URL("https://vpnapi.mydayai.uz:9443/api/v1/debug/error")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.doOutput = true
+                conn.outputStream.write(body.toString().toByteArray())
+                conn.responseCode
+                conn.disconnect()
+            } catch (_: Throwable) { }
+        }
     }
 }

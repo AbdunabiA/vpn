@@ -1,17 +1,25 @@
 package com.vpnapp.vpn
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.VpnService
+import android.os.Build
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONArray
 import org.json.JSONObject
-import tunnel.Tunnel
 
 /**
  * React Native TurboModule that bridges JavaScript to the Android VPN service.
+ *
+ * TunnelVpnService runs in the ":vpn" process. Communication is done via:
+ *   Main -> VPN : explicit startService(Intent) with an ACTION_* action.
+ *   VPN -> Main : sendBroadcast(intent.setPackage(packageName)) received here.
  *
  * JS calls:
  *   NativeModules.VpnModule.connect(configJSON)
@@ -26,31 +34,41 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     : ReactContextBaseJavaModule(reactContext) {
 
     companion object {
+        private const val TAG = "VpnTurboModule"
         private const val VPN_PREPARE_REQUEST = 1001
-        private var pendingConfigJson: String? = null
-        private var reactCtx: ReactApplicationContext? = null
+    }
 
-        /**
-         * Send a status event to React Native JS.
-         * Called by TunnelVpnService when connection state changes.
-         */
-        fun sendStatusEvent(statusJson: String) {
-            reactCtx?.let { ctx ->
-                if (ctx.hasActiveReactInstance()) {
-                    ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        .emit("onVpnStatusChanged", statusJson)
-                }
-            }
+    // Config saved while waiting for the VPN permission dialog to complete.
+    private var pendingConfigJson: String? = null
+
+    // JS promise for the in-flight connect() call. Resolved on BROADCAST_VPN_CONNECT_RESULT,
+    // rejected on error/disconnected status broadcasts.
+    private var connectPromise: Promise? = null
+
+    // Handler and runnable used to enforce a 30-second timeout on connectPromise.
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val connectTimeoutRunnable = Runnable {
+        connectPromise?.let { promise ->
+            connectPromise = null
+            promise.reject("CONNECT_TIMEOUT", "VPN connection timed out")
         }
+    }
 
-        /**
-         * Send traffic stats event to React Native JS.
-         */
-        fun sendStatsEvent(statsJson: String) {
-            reactCtx?.let { ctx ->
-                if (ctx.hasActiveReactInstance()) {
-                    ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        .emit("onVpnStatsUpdated", statsJson)
+    // Last known status JSON. Returned by getStatus() without crossing the process boundary.
+    private var cachedStatusJson: String =
+        """{"state":"disconnected","server_addr":"","protocol":"","connected_at":0,"bytes_up":0,"bytes_down":0}"""
+
+    // BroadcastReceiver that handles messages sent from the :vpn process.
+    private val vpnReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                TunnelVpnService.BROADCAST_VPN_STATUS -> {
+                    val statusJson = intent.getStringExtra(TunnelVpnService.EXTRA_STATUS_JSON) ?: return
+                    handleStatusBroadcast(statusJson)
+                }
+                TunnelVpnService.BROADCAST_VPN_CONNECT_RESULT -> {
+                    val success = intent.getBooleanExtra(TunnelVpnService.EXTRA_SUCCESS, false)
+                    handleConnectResultBroadcast(success)
                 }
             }
         }
@@ -60,8 +78,13 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
         override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, intent: Intent?) {
             if (requestCode == VPN_PREPARE_REQUEST) {
                 if (resultCode == Activity.RESULT_OK) {
-                    // User granted VPN permission — start the service
                     pendingConfigJson?.let { startService(it) }
+                    pendingConfigJson = null
+                } else {
+                    // User denied the VPN permission dialog.
+                    mainHandler.removeCallbacks(connectTimeoutRunnable)
+                    connectPromise?.reject("VPN_PERMISSION_DENIED", "VPN permission not granted")
+                    connectPromise = null
                     pendingConfigJson = null
                 }
             }
@@ -69,11 +92,127 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     }
 
     init {
-        reactCtx = reactContext
         reactContext.addActivityEventListener(activityListener)
+
+        // Register for broadcasts from the :vpn process.
+        val filter = IntentFilter().apply {
+            addAction(TunnelVpnService.BROADCAST_VPN_STATUS)
+            addAction(TunnelVpnService.BROADCAST_VPN_CONNECT_RESULT)
+        }
+        // RECEIVER_NOT_EXPORTED ensures Android 14+ does not expose the receiver
+        // to other apps. setPackage on the sender side provides a second layer.
+        ContextCompat.registerReceiver(
+            reactContext,
+            vpnReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        // Check for crash breadcrumbs written by the :vpn process in a previous
+        // session and upload them to the debug API.
+        Thread {
+            try {
+                val file = java.io.File(reactContext.filesDir, "crash_breadcrumb.txt")
+                if (file.exists()) {
+                    val breadcrumbs = file.readText().takeLast(1000)
+                    file.delete()
+                    if (breadcrumbs.isNotBlank()) {
+                        val body = JSONObject().apply {
+                            put("error", "CRASH BREADCRUMB from previous session")
+                            put("action", "crash_breadcrumb")
+                            put("stack", breadcrumbs)
+                        }
+                        val url = java.net.URL("https://vpnapi.mydayai.uz:9443/api/v1/debug/error")
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.requestMethod = "POST"
+                        conn.setRequestProperty("Content-Type", "application/json")
+                        conn.connectTimeout = 5000
+                        conn.readTimeout = 5000
+                        conn.doOutput = true
+                        conn.outputStream.write(body.toString().toByteArray())
+                        val code = conn.responseCode
+                        conn.disconnect()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            android.widget.Toast.makeText(
+                                reactContext,
+                                "Crash log sent to server (${breadcrumbs.lines().size} lines, HTTP $code)",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            } catch (_: Throwable) { }
+        }.start()
     }
 
     override fun getName(): String = "VpnModule"
+
+    override fun invalidate() {
+        try { reactApplicationContext.unregisterReceiver(vpnReceiver) } catch (_: Exception) { }
+        reactApplicationContext.removeActivityEventListener(activityListener)
+        mainHandler.removeCallbacks(connectTimeoutRunnable)
+        connectPromise?.reject("MODULE_INVALIDATED", "VPN module was destroyed")
+        connectPromise = null
+        super.invalidate()
+    }
+
+    // MARK: - Broadcast handlers
+
+    /**
+     * Handle a VPN_STATUS broadcast from the :vpn process.
+     * Updates cached status, forwards to JS, and rejects the pending promise on
+     * terminal error/disconnected states.
+     */
+    private fun handleStatusBroadcast(statusJson: String) {
+        cachedStatusJson = statusJson
+
+        // Reject the connect promise on terminal failure states.
+        // The success path is handled separately by BROADCAST_VPN_CONNECT_RESULT.
+        connectPromise?.let { promise ->
+            try {
+                val state = JSONObject(statusJson).optString("state", "")
+                val error = JSONObject(statusJson).optString("error", "")
+                when (state) {
+                    "error", "disconnected" -> {
+                        mainHandler.removeCallbacks(connectTimeoutRunnable)
+                        connectPromise = null
+                        if (error.isNotEmpty()) {
+                            promise.reject("TUNNEL_ERROR", error)
+                        } else {
+                            promise.reject("TUNNEL_ERROR", "Connection failed")
+                        }
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+
+        emitToJS("onVpnStatusChanged", statusJson)
+    }
+
+    /**
+     * Handle a VPN_CONNECT_RESULT broadcast from the :vpn process.
+     * Resolves the pending connect() promise when the tunnel is fully up.
+     */
+    private fun handleConnectResultBroadcast(success: Boolean) {
+        val promise = connectPromise ?: return
+        mainHandler.removeCallbacks(connectTimeoutRunnable)
+        connectPromise = null
+        if (success) {
+            promise.resolve("")
+        } else {
+            promise.reject("TUNNEL_ERROR", "Connection failed")
+        }
+    }
+
+    private fun emitToJS(event: String, payload: String) {
+        val ctx = reactApplicationContext
+        if (ctx.hasActiveReactInstance()) {
+            ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(event, payload)
+        }
+    }
+
+    // MARK: - React Native @ReactMethod implementations
 
     /**
      * Connect to a VPN server.
@@ -82,23 +221,30 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun connect(configJSON: String, promise: Promise) {
         try {
+            if (connectPromise != null) {
+                promise.reject("ALREADY_CONNECTING", "Connect already in progress")
+                return
+            }
+
             val activity = reactApplicationContext.currentActivity
             if (activity == null) {
                 promise.reject("NO_ACTIVITY", "No active activity")
                 return
             }
 
-            // Check if VPN permission is granted
-            val vpnIntent = VpnService.prepare(activity as android.content.Context)
+            requestBatteryOptimizationExemption(activity)
+
+            val vpnIntent = VpnService.prepare(activity as Context)
             if (vpnIntent != null) {
-                // Need to request permission — save config for after approval
+                // VPN permission dialog needs to be shown first.
                 pendingConfigJson = configJSON
+                connectPromise = promise
+                mainHandler.postDelayed(connectTimeoutRunnable, 30_000)
                 activity.startActivityForResult(vpnIntent, VPN_PREPARE_REQUEST, null)
-                promise.resolve("") // Will connect after permission granted
             } else {
-                // Permission already granted — start immediately
+                connectPromise = promise
+                mainHandler.postDelayed(connectTimeoutRunnable, 30_000)
                 startService(configJSON)
-                promise.resolve("")
             }
         } catch (e: Exception) {
             promise.reject("CONNECT_ERROR", e.message, e)
@@ -111,10 +257,7 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun disconnect(promise: Promise) {
         try {
-            val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
-                action = TunnelVpnService.ACTION_DISCONNECT
-            }
-            reactApplicationContext.startService(intent)
+            sendServiceIntent(TunnelVpnService.ACTION_DISCONNECT)
             promise.resolve("")
         } catch (e: Exception) {
             promise.reject("DISCONNECT_ERROR", e.message, e)
@@ -123,55 +266,52 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
 
     /**
      * Get current tunnel status as JSON.
+     * Returns the locally cached value — avoids crossing the process boundary
+     * since the Go library lives in the :vpn process.
      */
     @ReactMethod
     fun getStatus(promise: Promise) {
-        promise.resolve(Tunnel.getStatus())
+        promise.resolve(cachedStatusJson)
     }
 
     /**
      * Probe servers for latency.
+     * TODO: Route through the :vpn process via Intent to avoid loading the Go
+     * runtime in the main process. Returns empty results until that is wired up.
      */
     @ReactMethod
     fun probeServers(serversJSON: String, promise: Promise) {
-        // Run on background thread — probing involves network I/O
-        Thread {
-            try {
-                val result = Tunnel.probeServers(serversJSON)
-                promise.resolve(result)
-            } catch (e: Exception) {
-                promise.reject("PROBE_ERROR", e.message, e)
-            }
-        }.start()
+        // TODO: Route through :vpn process via Intent. For now return empty results.
+        promise.resolve("[]")
     }
 
     /**
      * Get current traffic stats as JSON.
+     * Returns cached zeros when the tunnel is in the :vpn process — the main
+     * process cannot call Tunnel.getTrafficStats() cross-process.
+     * Stats are broadcast via onVpnStatsUpdated events instead.
      */
     @ReactMethod
     fun getTrafficStats(promise: Promise) {
-        promise.resolve(Tunnel.getTrafficStats())
+        promise.resolve("""{"bytes_up":0,"bytes_down":0}""")
     }
 
     /**
      * Enable or disable the kill switch.
      *
-     * The preference is persisted in SharedPreferences so it survives app and
-     * service restarts. If TunnelVpnService is currently running the setting is
-     * applied immediately.
+     * Persists the setting locally and sends an Intent to the :vpn process so
+     * TunnelVpnService can apply it immediately if the tunnel is running.
      */
     @ReactMethod
     fun setKillSwitch(enabled: Boolean, promise: Promise) {
         try {
-            // Persist so the service can read it on next start
-            reactApplicationContext
-                .getSharedPreferences("vpn_prefs", android.content.Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean("kill_switch_enabled", enabled)
-                .apply()
-
-            // Apply to the running service instance if available
-            TunnelVpnService.instance?.setKillSwitch(enabled)
+            // Forward to the :vpn process service. TunnelVpnService is the sole
+            // writer of kill_switch_enabled via applyKillSwitchSetting().
+            val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
+                action = TunnelVpnService.ACTION_SET_KILL_SWITCH
+                putExtra(TunnelVpnService.EXTRA_KILL_SWITCH_ENABLED, enabled)
+            }
+            reactApplicationContext.startService(intent)
 
             promise.resolve(null)
         } catch (e: Exception) {
@@ -181,24 +321,21 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
 
     /**
      * Persist and apply the list of package names that should bypass the VPN.
-     * appsJson: JSON array of package name strings, e.g. ["com.google.android.youtube"].
+     * appsJson: JSON array of package name strings.
      */
     @ReactMethod
     fun setExcludedApps(appsJson: String, promise: Promise) {
         try {
-            // Validate JSON
-            val arr = JSONArray(appsJson)
-            val apps = (0 until arr.length()).map { arr.getString(it) }
+            // Validate JSON before sending it cross-process.
+            JSONArray(appsJson)
 
-            // Persist so the service can restore the list on restart
-            reactApplicationContext
-                .getSharedPreferences(TunnelVpnService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
-                .edit()
-                .putString(TunnelVpnService.PREF_EXCLUDED_APPS, appsJson)
-                .apply()
-
-            // Apply to the running service instance if available (rebuilds TUN immediately)
-            TunnelVpnService.instance?.setExcludedApps(apps)
+            // Forward to the :vpn process service. TunnelVpnService is the sole
+            // writer of excluded_apps_json via applyExcludedApps().
+            val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
+                action = TunnelVpnService.ACTION_SET_EXCLUDED_APPS
+                putExtra(TunnelVpnService.EXTRA_APPS_JSON, appsJson)
+            }
+            reactApplicationContext.startService(intent)
 
             promise.resolve(null)
         } catch (e: Exception) {
@@ -209,8 +346,6 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     /**
      * Query installed apps that have INTERNET permission.
      * Returns a JSON array of {packageName, appName, isSystemApp}.
-     * System apps (android.uid.system flag) are included but flagged.
-     *
      * Runs on a background thread — PackageManager queries can be slow.
      */
     @ReactMethod
@@ -222,7 +357,6 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
                 val result = JSONArray()
 
                 for (pkg in packages) {
-                    // Only include apps that declare INTERNET permission
                     val perms = pkg.requestedPermissions ?: continue
                     if (!perms.contains("android.permission.INTERNET")) continue
 
@@ -252,15 +386,38 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
         }.start()
     }
 
+    // MARK: - Private helpers
+
+    private fun requestBatteryOptimizationExemption(activity: Activity) {
+        try {
+            val pm = activity.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(activity.packageName)) {
+                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = android.net.Uri.parse("package:${activity.packageName}")
+                }
+                activity.startActivity(intent)
+            }
+        } catch (_: Throwable) { }
+    }
+
+    /** Start TunnelVpnService with ACTION_CONNECT and the given config. */
     private fun startService(configJson: String) {
         val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
             action = TunnelVpnService.ACTION_CONNECT
             putExtra(TunnelVpnService.EXTRA_CONFIG_JSON, configJson)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             reactApplicationContext.startForegroundService(intent)
         } else {
             reactApplicationContext.startService(intent)
         }
+    }
+
+    /** Send a bare action Intent to TunnelVpnService (no extras). */
+    private fun sendServiceIntent(action: String) {
+        val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
+            this.action = action
+        }
+        reactApplicationContext.startService(intent)
     }
 }

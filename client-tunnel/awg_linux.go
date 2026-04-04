@@ -3,11 +3,11 @@
 package tunnel
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/amnezia-vpn/amneziawg-go/ipc"
 	"github.com/amnezia-vpn/amneziawg-go/tun"
 	"golang.org/x/sys/unix"
 )
@@ -69,7 +69,7 @@ func startAWGTunnel(fd int, cfg AWGConfig) error {
 			uapiBytes[i] = 0
 		}
 	}()
-	if err := dev.IpcSetOperation(ipc.StringToReader(string(uapiBytes))); err != nil {
+	if err := dev.IpcSetOperation(bytes.NewReader(uapiBytes)); err != nil {
 		dev.Close()
 		return fmt.Errorf("awg: ipc set operation: %w", err)
 	}
