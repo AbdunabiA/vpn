@@ -55,9 +55,11 @@ func openTestDB(t *testing.T) *gorm.DB {
 
 func seedTestUser(t *testing.T, db *gorm.DB) *model.User {
 	t.Helper()
+	emailHash := "testhash-" + t.Name()
+	passwordHash := "ph"
 	user := &model.User{
-		EmailHash:        "testhash-" + t.Name(),
-		PasswordHash:     "ph",
+		EmailHash:        &emailHash,
+		PasswordHash:     &passwordHash,
 		SubscriptionTier: "free",
 	}
 	if err := db.Create(user).Error; err != nil {

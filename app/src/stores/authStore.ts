@@ -28,16 +28,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: false,
 
-  // Called once on app startup — restores tokens from storage
+  // Called once on app startup — restores tokens from storage or auto-creates a guest session
   initialize: () => {
-    AsyncStorage.getItem(TOKENS_KEY).then(stored => {
+    AsyncStorage.getItem(TOKENS_KEY).then(async stored => {
       if (stored) {
         try {
           const tokens = JSON.parse(stored) as AuthTokens;
           set({tokens, isAuthenticated: true});
+          return;
         } catch {
-          AsyncStorage.removeItem(TOKENS_KEY);
+          await AsyncStorage.removeItem(TOKENS_KEY);
         }
+      }
+
+      // No stored tokens — create a guest session automatically so the user
+      // goes straight to the home screen without seeing a login screen.
+      try {
+        const {data} = await api.post<{data: AuthTokens}>('/auth/guest');
+        const tokens = data.data;
+        await AsyncStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+        set({tokens, isAuthenticated: true});
+      } catch {
+        // Guest login failed (e.g. no network). The app stays unauthenticated
+        // and will retry the next time initialize() is called.
       }
     });
   },

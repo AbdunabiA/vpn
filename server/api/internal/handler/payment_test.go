@@ -80,9 +80,11 @@ func newTestDB(t *testing.T) *gorm.DB {
 // seedUser inserts a user row and returns it.
 func seedUser(t *testing.T, db *gorm.DB, tier string) *model.User {
 	t.Helper()
+	emailHash := "testhash"
+	passwordHash := "ph"
 	user := &model.User{
-		EmailHash:        "testhash",
-		PasswordHash:     "ph",
+		EmailHash:        &emailHash,
+		PasswordHash:     &passwordHash,
 		SubscriptionTier: tier,
 	}
 	if err := db.Create(user).Error; err != nil {

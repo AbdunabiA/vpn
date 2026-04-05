@@ -19,7 +19,13 @@ export const useServerStore = create<ServerState>((set, get) => ({
   favoriteIds: [],
   isLoading: false,
 
-  setServers: (servers: Server[]) => set({servers}),
+  setServers: (servers: Server[]) => {
+    const {selectedServer} = get();
+    // Auto-select the first server if none is currently selected
+    const nextSelected =
+      selectedServer ?? (servers.length > 0 ? servers[0] : null);
+    set({servers, selectedServer: nextSelected});
+  },
 
   selectServer: (server: Server) => set({selectedServer: server}),
 

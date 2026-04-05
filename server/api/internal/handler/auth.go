@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -77,9 +78,10 @@ func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler
 		}
 
 		// Create user in database
+		passwordHashStr := string(passwordHash)
 		user := model.User{
-			EmailHash:    emailHash,
-			PasswordHash: string(passwordHash),
+			EmailHash:    &emailHash,
+			PasswordHash: &passwordHashStr,
 			FullName:     req.Name,
 		}
 		if err := repository.CreateUser(db, &user); err != nil {
@@ -178,8 +180,13 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Verify password
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		// Verify password — guest accounts have no password hash
+		if user.PasswordHash == nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "invalid credentials",
+			})
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "invalid credentials",
 			})
@@ -261,6 +268,67 @@ func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Han
 		}
 
 		return c.JSON(fiber.Map{
+			"data": tokens,
+		})
+	}
+}
+
+// GuestLogin handles POST /auth/guest.
+// Creates an anonymous account with a random name, no email or password, and
+// returns JWT tokens so the app can operate without requiring registration.
+func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Generate a short random suffix from a UUID for the display name
+		suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:8]
+		guestName := "guest_" + suffix
+
+		user := model.User{
+			FullName: guestName,
+			// EmailHash and PasswordHash left nil — guest account
+		}
+		if err := repository.CreateUser(db, &user); err != nil {
+			logger.Error("failed to create guest user", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		sub := model.Subscription{
+			UserID:   user.ID,
+			Plan:     "free",
+			IsActive: true,
+		}
+		if err := repository.CreateSubscription(db, &sub); err != nil {
+			logger.Error("failed to create guest subscription — rolling back user",
+				zap.String("user_id", user.ID),
+				zap.Error(err),
+			)
+			if deleteErr := repository.DeleteUser(db, user.ID); deleteErr != nil {
+				logger.Error("failed to roll back guest user after subscription failure",
+					zap.String("user_id", user.ID),
+					zap.Error(deleteErr),
+				)
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		tokens, err := generateTokens(user.ID, "free", "user", user.FullName, cfg.JWTSecret)
+		if err != nil {
+			logger.Error("failed to generate guest tokens", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		if err := storeRefreshSession(db, user.ID, tokens.RefreshToken); err != nil {
+			logger.Error("failed to store guest session", zap.Error(err))
+		}
+
+		logger.Info("guest user created", zap.String("user_id", user.ID), zap.String("name", guestName))
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"data": tokens,
 		})
 	}

@@ -4,10 +4,11 @@ import "time"
 
 // User represents a VPN user account.
 // Email is stored as SHA-256 hash only — zero-knowledge policy.
+// Guest users have no email or password (both fields are nil).
 type User struct {
 	ID                    string     `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	EmailHash             string     `json:"-" gorm:"uniqueIndex;not null"`
-	PasswordHash          string     `json:"-" gorm:"not null"`
+	EmailHash             *string    `json:"-" gorm:"uniqueIndex"`
+	PasswordHash          *string    `json:"-"`
 	FullName              string     `json:"full_name" gorm:"type:varchar(255);default:''"`
 	SubscriptionTier      string     `json:"subscription_tier" gorm:"default:free"`
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at"`

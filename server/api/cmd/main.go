@@ -79,6 +79,7 @@ func main() {
 	api.Post("/auth/register", handler.Register(logger, cfg, db))
 	api.Post("/auth/login", handler.Login(logger, cfg, db))
 	api.Post("/auth/refresh", handler.RefreshToken(logger, cfg, db))
+	api.Post("/auth/guest", handler.GuestLogin(logger, db, cfg))
 	api.Get("/health", handler.Health())
 
 	// Stripe webhook — public route, authenticated via Stripe-Signature header.
