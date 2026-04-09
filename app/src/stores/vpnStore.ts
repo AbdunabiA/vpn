@@ -96,17 +96,27 @@ export const useVpnStore = create<VpnState>((set, get) => ({
     try {
       await vpnBridge.disconnect();
 
-      set({
-        connectionState: 'disconnected',
-        connectedAt: null,
-        bytesUp: 0,
-        bytesDown: 0,
-        speedUp: 0,
-        speedDown: 0,
-        reconnectAttempt: 0,
-        // connectionId is NOT cleared here — the hook's disconnect callback
-        // reads it to send DELETE /connections/:id before clearing it.
-      });
+      // Don't eagerly set 'disconnected' — wait for native status broadcast.
+      // Use a safety timeout: if native doesn't confirm within 5s, force it.
+      const timeout = setTimeout(() => {
+        if (get().connectionState === 'disconnecting') {
+          console.warn('[VPN Store] Native disconnect timeout — forcing state');
+          set({
+            connectionState: 'disconnected',
+            connectedAt: null,
+            bytesUp: 0,
+            bytesDown: 0,
+            speedUp: 0,
+            speedDown: 0,
+            reconnectAttempt: 0,
+          });
+        }
+      }, 5000);
+
+      // If updateStatus fires with 'disconnected' before timeout, it will
+      // update the state and this timeout becomes a no-op.
+      // Store the timeout so it can be cleaned up if needed.
+      (get() as any)._disconnectTimeout = timeout;
     } catch (err) {
       set({
         connectionState: 'error',
@@ -136,6 +146,23 @@ export const useVpnStore = create<VpnState>((set, get) => ({
         bytesUp: status.bytes_up,
         bytesDown: status.bytes_down,
         connectedAt: status.connected_at > 0 ? new Date(status.connected_at * 1000) : null,
+      });
+      return;
+    }
+
+    // If native confirms 'disconnected', clear stats and cancel safety timeout
+    if (status.state === 'disconnected') {
+      const timeout = (get() as any)._disconnectTimeout;
+      if (timeout) clearTimeout(timeout);
+      set({
+        connectionState: 'disconnected',
+        connectedAt: null,
+        bytesUp: 0,
+        bytesDown: 0,
+        speedUp: 0,
+        speedDown: 0,
+        reconnectAttempt: 0,
+        error: null,
       });
       return;
     }

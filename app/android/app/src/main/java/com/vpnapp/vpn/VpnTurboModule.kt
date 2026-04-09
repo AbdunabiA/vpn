@@ -424,6 +424,11 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
         val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
             this.action = action
         }
-        reactApplicationContext.startService(intent)
+        // Use startForegroundService on O+ for reliable delivery to the :vpn process
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            reactApplicationContext.startForegroundService(intent)
+        } else {
+            reactApplicationContext.startService(intent)
+        }
     }
 }

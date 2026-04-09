@@ -172,7 +172,7 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                 applyExcludedApps(appsJson)
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -434,9 +434,9 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     private fun stopVpn(isManual: Boolean = false) {
         sendDebugEvent("stopVpn_called", "isManual=$isManual isRunning=$isRunning killSwitchActive=$killSwitchActive stackTrace=${Thread.currentThread().stackTrace.take(8).joinToString(" <- ") { "${it.className}.${it.methodName}:${it.lineNumber}" }}")
 
-        // Allow a manual disconnect to force-close even when we are in kill
-        // switch active state (killSwitchActive = true, isRunning = false).
-        if (!isRunning && !killSwitchActive) return
+        // For manual disconnect, always attempt full cleanup even if isRunning
+        // is false — the Go tunnel or TUN fd may still be alive.
+        if (!isManual && !isRunning && !killSwitchActive) return
 
         val applyKillSwitch = killSwitchEnabled && !isManual
 
