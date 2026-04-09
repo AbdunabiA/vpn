@@ -7,6 +7,7 @@ import {MobileAds} from 'yandex-mobile-ads';
 
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useAuthStore} from './src/stores/authStore';
+import {useSettingsStore} from './src/stores/settingsStore';
 import {ErrorBoundary} from './src/components/ErrorBoundary';
 import {colors} from './src/theme';
 
@@ -41,9 +42,10 @@ const navTheme = {
 };
 
 function App(): React.JSX.Element {
-  // Restore auth tokens from MMKV on app launch
+  // Restore persisted state on app launch
   useEffect(() => {
     useAuthStore.getState().initialize();
+    useSettingsStore.getState().initialize();
 
     // Initialize Yandex Ads SDK (fire-and-forget, failure is non-fatal)
     MobileAds.initialize().catch(() => {

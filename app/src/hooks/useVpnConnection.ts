@@ -296,7 +296,6 @@ export function useVpnConnection() {
     connectionState,
     connectionId,
     autoReconnect,
-    reconnectAttempt,
     currentServer,
     selectedServer,
     unregisterConnection,
