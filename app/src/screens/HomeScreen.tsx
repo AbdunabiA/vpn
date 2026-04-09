@@ -29,7 +29,7 @@ export function HomeScreen() {
     toggle,
   } = useVpnConnection();
   const {selectedServer} = useServerStore();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
 
   // Connection timer
   const [elapsed, setElapsed] = useState('00:00:00');
@@ -55,7 +55,7 @@ export function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
+      <View style={[styles.content, tabletContentStyle]}>
         {/* Status */}
         <View style={styles.statusSection}>
           <StatusBadge state={connectionState} />

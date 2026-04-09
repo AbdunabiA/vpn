@@ -279,23 +279,23 @@ function IosSplitTunnel() {
 
 export function SplitTunnelScreen() {
   const {t} = useTranslation();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center' as const, width: '100%', flex: 1} : {flex: 1}}>
-      {/* Description banner */}
-      <View style={styles.descriptionBanner}>
-        <Text style={styles.descriptionText}>
-          {t('splitTunnel.description')}
-        </Text>
-      </View>
+      <View style={[styles.flex, tabletContentStyle]}>
+        {/* Description banner */}
+        <View style={styles.descriptionBanner}>
+          <Text style={styles.descriptionText}>
+            {t('splitTunnel.description')}
+          </Text>
+        </View>
 
-      {Platform.OS === 'android' ? (
-        <AndroidSplitTunnel />
-      ) : (
-        <IosSplitTunnel />
-      )}
+        {Platform.OS === 'android' ? (
+          <AndroidSplitTunnel />
+        ) : (
+          <IosSplitTunnel />
+        )}
       </View>
     </SafeAreaView>
   );

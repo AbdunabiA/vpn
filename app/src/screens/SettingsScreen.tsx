@@ -73,7 +73,7 @@ export function SettingsScreen() {
   const {t} = useTranslation();
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
   const {
     protocol,
     killSwitch,
@@ -95,7 +95,7 @@ export function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
+      <ScrollView contentContainerStyle={[styles.content, tabletContentStyle]}>
         {/* Protocol Selection */}
         <Text style={styles.sectionTitle}>{t('settings.protocol')}</Text>
         <View style={styles.card}>

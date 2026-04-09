@@ -468,7 +468,7 @@ export function useVpnConnection() {
         error: err instanceof Error ? err.message : 'Connection failed',
       });
     }
-  }, [selectedServer, storeConnect, userProtocol, reserveConnection]);
+  }, [selectedServer, storeConnect, userProtocol, reserveConnection, setConnectionId]);
 
   const disconnect = useCallback(async () => {
     // Mark as manual so the auto-reconnect logic is suppressed

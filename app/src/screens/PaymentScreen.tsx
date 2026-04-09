@@ -138,7 +138,7 @@ function PlanCard({plan, isCurrent, isUpgrading, onUpgrade}: PlanCardProps) {
 
 export function PaymentScreen() {
   const {t} = useTranslation();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
   const {data: subscription, isLoading} = useSubscription();
   const [upgradingPlan, setUpgradingPlan] = useState<Plan | null>(null);
 
@@ -149,7 +149,7 @@ export function PaymentScreen() {
     try {
       const session = await createCheckoutSession(plan);
       await Linking.openURL(session.url);
-    } catch (err) {
+    } catch {
       Alert.alert(
         t('payment.errorTitle'),
         t('payment.errorMessage'),
@@ -162,7 +162,7 @@ export function PaymentScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center' as const, width: '100%'} : undefined]} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, tabletContentStyle]} showsVerticalScrollIndicator={false}>
         <Text style={styles.screenTitle}>{t('payment.title')}</Text>
         <Text style={styles.screenSubtitle}>{t('payment.subtitle')}</Text>
 

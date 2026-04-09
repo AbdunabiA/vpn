@@ -58,7 +58,7 @@ export function AccountScreen() {
   const {t} = useTranslation();
   const navigation = useNavigation<NavigationProp>();
   const {user, isAuthenticated, fetchAccount, updateProfile} = useAuthStore();
-  const {contentMaxWidth, scale} = useLayout();
+  const {tabletContentStyle, scale} = useLayout();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -140,7 +140,7 @@ export function AccountScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
-        contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}
+        contentContainerStyle={[styles.content, tabletContentStyle]}
         showsVerticalScrollIndicator={false}>
 
         {/* Avatar + Name header */}
@@ -251,7 +251,7 @@ export function AccountScreen() {
 
 function LoginView() {
   const {t} = useTranslation();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
   const {login, register, isLoading} = useAuthStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -290,7 +290,7 @@ function LoginView() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={[styles.loginContent, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
+      <View style={[styles.loginContent, tabletContentStyle]}>
         <Text style={styles.loginTitle}>
           {isRegisterMode ? t('account.register') : t('account.login')}
         </Text>

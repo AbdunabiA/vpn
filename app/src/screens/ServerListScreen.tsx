@@ -22,7 +22,7 @@ export function ServerListScreen() {
   const navigation = useNavigation();
   const {data: servers, isLoading, error} = useServerList();
   const {selectedServer, favoriteIds, selectServer, toggleFavorite} = useServerStore();
-  const {contentMaxWidth} = useLayout();
+  const {tabletContentStyle} = useLayout();
 
   // Group servers by region
   const sections = useMemo(() => {
@@ -87,7 +87,7 @@ export function ServerListScreen() {
             ))}
           </View>
         )}
-        contentContainerStyle={[styles.list, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}
+        contentContainerStyle={[styles.list, tabletContentStyle]}
       />
     </SafeAreaView>
   );
