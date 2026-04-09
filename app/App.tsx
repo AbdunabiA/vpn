@@ -3,6 +3,7 @@ import {StatusBar} from 'react-native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {NavigationContainer} from '@react-navigation/native';
 import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
+import {MobileAds} from 'yandex-mobile-ads';
 
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useAuthStore} from './src/stores/authStore';
@@ -43,6 +44,11 @@ function App(): React.JSX.Element {
   // Restore auth tokens from MMKV on app launch
   useEffect(() => {
     useAuthStore.getState().initialize();
+
+    // Initialize Yandex Ads SDK (fire-and-forget, failure is non-fatal)
+    MobileAds.initialize().catch(err => {
+      console.warn('[Ads] SDK initialization failed:', err);
+    });
   }, []);
 
   return (

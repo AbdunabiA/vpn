@@ -3,6 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import {useVpnStore} from '../stores/vpnStore';
 import {useServerStore} from '../stores/serverStore';
 import {useSettingsStore} from '../stores/settingsStore';
+import {useInterstitialAd} from '../ads/useInterstitialAd';
 import * as vpnBridge from '../services/vpnBridge';
 import api from '../services/api';
 import type {ServerConfig} from '../types/api';
@@ -80,6 +81,7 @@ export function useVpnConnection() {
 
   const {selectedServer} = useServerStore();
   const {autoReconnect, protocol: userProtocol} = useSettingsStore();
+  const {maybeShowInterstitial} = useInterstitialAd();
 
   // Track the previous connection state to detect unexpected disconnects
   const prevStateRef = useRef(connectionState);
@@ -411,6 +413,10 @@ export function useVpnConnection() {
     const server = selectedServer;
     if (!server) return;
 
+    // Show interstitial ad (free users, every Nth connect).
+    // Awaits until dismissed, skipped, or times out — never blocks VPN.
+    await maybeShowInterstitial();
+
     isManualDisconnectRef.current = false;
 
     try {
@@ -468,7 +474,7 @@ export function useVpnConnection() {
         error: err instanceof Error ? err.message : 'Connection failed',
       });
     }
-  }, [selectedServer, storeConnect, userProtocol, reserveConnection, setConnectionId]);
+  }, [selectedServer, storeConnect, userProtocol, reserveConnection, setConnectionId, maybeShowInterstitial]);
 
   const disconnect = useCallback(async () => {
     // Mark as manual so the auto-reconnect logic is suppressed

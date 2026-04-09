@@ -10,6 +10,7 @@ import {StatusBadge} from '../components/StatusBadge';
 import {useVpnConnection} from '../hooks/useVpnConnection';
 import {useServerStore} from '../stores/serverStore';
 import {useLayout} from '../hooks/useLayout';
+import {AdBanner} from '../ads/AdBanner';
 import {colors, typography, spacing} from '../theme';
 import type {RootStackParamList} from '../navigation/RootNavigator';
 
@@ -100,6 +101,9 @@ export function HomeScreen() {
           <Text style={styles.chevron}>›</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Ad banner — only renders for free tier users */}
+      <AdBanner />
     </SafeAreaView>
   );
 }

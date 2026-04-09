@@ -55,5 +55,14 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>This allows us to show you relevant ads while using the free version</string>
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>zq492l623r.skadnetwork</string>
+		</dict>
+	</array>
 </dict>
 </plist>

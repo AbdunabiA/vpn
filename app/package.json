@@ -30,6 +30,7 @@
     "react-native-screens": "^4.24.0",
     "react-native-svg": "^15.15.4",
     "react-native-worklets": "^0.8.1",
+    "yandex-mobile-ads": "^7.18.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

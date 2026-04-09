@@ -18,4 +18,13 @@ buildscript {
     }
 }
 
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        // Yandex Mobile Ads SDK
+        maven { url 'https://ads-sdk.yandex.net/maven2' }
+    }
+}
+
 apply plugin: "com.facebook.react.rootproject"
