@@ -46,8 +46,8 @@ function App(): React.JSX.Element {
     useAuthStore.getState().initialize();
 
     // Initialize Yandex Ads SDK (fire-and-forget, failure is non-fatal)
-    MobileAds.initialize().catch(err => {
-      console.warn('[Ads] SDK initialization failed:', err);
+    MobileAds.initialize().catch(() => {
+      console.warn('[Ads] SDK initialization failed');
     });
   }, []);
 

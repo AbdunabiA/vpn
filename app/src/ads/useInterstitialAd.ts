@@ -86,11 +86,8 @@ export function useInterstitialAd() {
           clearTimeout(timeout);
           resolve();
         }
-        // Clear callbacks to prevent further invocations on the stale ad.
-        // Note: InterstitialAd does not expose a public destroy() method;
-        // NativeEventEmitter subscriptions rely on the native 'onAdDeleted' event.
-        ad.onAdDismissed = () => {};
-        ad.onAdFailedToShow = () => {};
+        // Don't re-assign callbacks here — each setter call adds a new
+        // NativeEventEmitter subscription. Nulling the ref is sufficient.
         adRef.current = null;
         useAdStore.getState().setInterstitialReady(false);
         preload();

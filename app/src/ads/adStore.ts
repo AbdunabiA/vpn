@@ -1,9 +1,16 @@
 import {create} from 'zustand';
-import {MMKV} from 'react-native-mmkv';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const storage = new MMKV({id: 'ad-store'});
+const CONNECT_COUNT_KEY = 'ad-connect-count';
 
-const CONNECT_COUNT_KEY = 'vpn-connect-count';
+// Load persisted count on startup (async — defaults to 0 until loaded)
+let persistedCount = 0;
+AsyncStorage.getItem(CONNECT_COUNT_KEY).then(val => {
+  if (val !== null) {
+    persistedCount = parseInt(val, 10) || 0;
+    useAdStore.setState({connectCount: persistedCount});
+  }
+});
 
 interface AdState {
   connectCount: number;
@@ -15,18 +22,18 @@ interface AdState {
 }
 
 export const useAdStore = create<AdState>((set, get) => ({
-  connectCount: storage.getNumber(CONNECT_COUNT_KEY) ?? 0,
+  connectCount: persistedCount,
   interstitialReady: false,
 
   incrementConnectCount: () => {
     const next = get().connectCount + 1;
-    storage.set(CONNECT_COUNT_KEY, next);
+    AsyncStorage.setItem(CONNECT_COUNT_KEY, String(next)).catch(() => {});
     set({connectCount: next});
     return next;
   },
 
   resetConnectCount: () => {
-    storage.set(CONNECT_COUNT_KEY, 0);
+    AsyncStorage.setItem(CONNECT_COUNT_KEY, '0').catch(() => {});
     set({connectCount: 0});
   },
 
