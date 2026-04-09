@@ -32,7 +32,7 @@ export function useInterstitialAd() {
         loaderRef.current = await InterstitialAdLoader.create();
       }
 
-      const config = new AdRequestConfiguration(AD_UNIT_IDS.interstitial);
+      const config = new AdRequestConfiguration({adUnitId: AD_UNIT_IDS.interstitial});
       const ad = await loaderRef.current.loadAd(config);
       adRef.current = ad;
       useAdStore.getState().setInterstitialReady(true);
@@ -86,7 +86,11 @@ export function useInterstitialAd() {
           clearTimeout(timeout);
           resolve();
         }
-        // Preload next interstitial
+        // Clear callbacks to prevent further invocations on the stale ad.
+        // Note: InterstitialAd does not expose a public destroy() method;
+        // NativeEventEmitter subscriptions rely on the native 'onAdDeleted' event.
+        ad.onAdDismissed = () => {};
+        ad.onAdFailedToShow = () => {};
         adRef.current = null;
         useAdStore.getState().setInterstitialReady(false);
         preload();
@@ -98,11 +102,9 @@ export function useInterstitialAd() {
       ad.onAdClicked = () => {};
       ad.onAdImpression = () => {};
 
-      try {
-        ad.show();
-      } catch {
+      ad.show().catch(() => {
         finish();
-      }
+      });
     });
   }, [isFree, preload]);
 
