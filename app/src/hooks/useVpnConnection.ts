@@ -353,7 +353,8 @@ export function useVpnConnection() {
       const isConnected = state.isConnected && state.isInternetReachable !== false;
       const vpnState = useVpnStore.getState().connectionState;
 
-      // Network came back while VPN is in error/disconnected state and wasn't manually disconnected
+      // Network came back while VPN is in error/disconnected state and wasn't manually disconnected.
+      // Skip if auto-reconnect is already handling it (reconnecting/connecting/switching_protocol).
       if (
         isConnected &&
         wasConnectedRef.current &&
@@ -368,6 +369,12 @@ export function useVpnConnection() {
         // Small delay to let the network stabilize
         if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = setTimeout(async () => {
+          // Re-check state — auto-reconnect may have already started
+          const currentState = useVpnStore.getState().connectionState;
+          if (currentState === 'connecting' || currentState === 'reconnecting' || currentState === 'connected' || currentState === 'switching_protocol') {
+            return;
+          }
+
           const server = selectedServer || currentServer;
           if (!server) return;
 

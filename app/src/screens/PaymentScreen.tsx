@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {useSubscription} from '../hooks/useSubscription';
+import {useLayout} from '../hooks/useLayout';
 import {createCheckoutSession} from '../services/payment';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {Subscription} from '../types/api';
@@ -137,6 +138,7 @@ function PlanCard({plan, isCurrent, isUpgrading, onUpgrade}: PlanCardProps) {
 
 export function PaymentScreen() {
   const {t} = useTranslation();
+  const {contentMaxWidth} = useLayout();
   const {data: subscription, isLoading} = useSubscription();
   const [upgradingPlan, setUpgradingPlan] = useState<Plan | null>(null);
 
@@ -160,7 +162,7 @@ export function PaymentScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center' as const, width: '100%'} : undefined]} showsVerticalScrollIndicator={false}>
         <Text style={styles.screenTitle}>{t('payment.title')}</Text>
         <Text style={styles.screenSubtitle}>{t('payment.subtitle')}</Text>
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {
   TouchableOpacity,
   View,
@@ -26,6 +26,8 @@ const STATE_COLORS: Record<ConnectionState, string> = {
   error: colors.error,
 };
 
+const BUTTON_SIZE = 140;
+
 export function ConnectButton({state, onPress}: ConnectButtonProps) {
   const {t} = useTranslation();
   const {scale} = useLayout();
@@ -42,8 +44,19 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
     error: t('common.retry'),
   }[state];
 
-  const btnSize = BUTTON_SIZE * scale;
-  const iconSize = 44 * scale;
+  const sizes = useMemo(() => {
+    const btn = BUTTON_SIZE * scale;
+    const icon = 44 * scale;
+    const outerSize = btn + 60 * scale;
+    const innerSize = btn + 30 * scale;
+    return {
+      outerRing: {width: outerSize, height: outerSize, borderRadius: outerSize / 2},
+      innerRing: {width: innerSize, height: innerSize, borderRadius: innerSize / 2},
+      button: {width: btn, height: btn, borderRadius: btn / 2},
+      icon: {width: icon, height: icon, borderRadius: icon / 2},
+      line: {width: 3 * scale, height: 20 * scale, marginTop: -8 * scale},
+    };
+  }, [scale]);
 
   return (
     <TouchableOpacity
@@ -52,16 +65,16 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
       activeOpacity={0.8}
       style={styles.wrapper}>
       {/* Outer glow ring */}
-      <View style={[styles.ring, {width: btnSize + 60 * scale, height: btnSize + 60 * scale, borderRadius: (btnSize + 60 * scale) / 2, borderColor: buttonColor + '30'}]}>
+      <View style={[styles.ring, sizes.outerRing, {borderColor: buttonColor + '30'}]}>
         {/* Inner glow ring */}
-        <View style={[styles.ring, {width: btnSize + 30 * scale, height: btnSize + 30 * scale, borderRadius: (btnSize + 30 * scale) / 2, borderColor: buttonColor + '60'}]}>
+        <View style={[styles.ring, sizes.innerRing, {borderColor: buttonColor + '60'}]}>
           {/* Main button */}
-          <View style={[styles.button, {width: btnSize, height: btnSize, borderRadius: btnSize / 2, backgroundColor: buttonColor + '20', borderColor: buttonColor}]}>
+          <View style={[styles.button, sizes.button, {backgroundColor: buttonColor + '20', borderColor: buttonColor}]}>
             {isTransitioning ? (
               <ActivityIndicator size="large" color={buttonColor} />
             ) : (
-              <View style={[styles.powerIcon, {width: iconSize, height: iconSize, borderRadius: iconSize / 2, borderColor: buttonColor}]}>
-                <View style={[styles.powerLine, {width: 3 * scale, height: 20 * scale, backgroundColor: buttonColor, marginTop: -8 * scale}]} />
+              <View style={[styles.powerIcon, sizes.icon, {borderColor: buttonColor}]}>
+                <View style={[styles.powerLine, sizes.line, {backgroundColor: buttonColor}]} />
               </View>
             )}
           </View>
@@ -73,8 +86,6 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
     </TouchableOpacity>
   );
 }
-
-const BUTTON_SIZE = 140;
 
 const styles = StyleSheet.create({
   wrapper: {

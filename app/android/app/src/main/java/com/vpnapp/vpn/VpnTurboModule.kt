@@ -419,16 +419,16 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
         }
     }
 
-    /** Send a bare action Intent to TunnelVpnService (no extras). */
+    /** Send a bare action Intent to TunnelVpnService (no extras).
+     *  Uses regular startService — the service is already running as foreground
+     *  from the connect call. If it was killed, starting it just for disconnect
+     *  with startForegroundService would risk a crash if startForeground isn't
+     *  called within 5s.
+     */
     private fun sendServiceIntent(action: String) {
         val intent = Intent(reactApplicationContext, TunnelVpnService::class.java).apply {
             this.action = action
         }
-        // Use startForegroundService on O+ for reliable delivery to the :vpn process
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            reactApplicationContext.startForegroundService(intent)
-        } else {
-            reactApplicationContext.startService(intent)
-        }
+        reactApplicationContext.startService(intent)
     }
 }

@@ -8,9 +8,6 @@ export function useLayout() {
   const isTablet = Math.min(width, height) >= TABLET_BREAKPOINT;
   const scale = isTablet ? 1.3 : 1;
   const contentMaxWidth = isTablet ? MAX_CONTENT_WIDTH : undefined;
-  const contentPaddingHorizontal = isTablet
-    ? Math.max((width - MAX_CONTENT_WIDTH) / 2, 24)
-    : undefined;
 
-  return {width, height, isTablet, scale, contentMaxWidth, contentPaddingHorizontal};
+  return {width, height, isTablet, scale, contentMaxWidth};
 }

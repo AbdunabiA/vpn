@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {useSettingsStore} from '../stores/settingsStore';
+import {useLayout} from '../hooks/useLayout';
 import {getInstalledApps} from '../services/vpnBridge';
 import type {InstalledApp} from '../services/vpnBridge';
 import {colors, typography, spacing, borderRadius} from '../theme';
@@ -278,9 +279,11 @@ function IosSplitTunnel() {
 
 export function SplitTunnelScreen() {
   const {t} = useTranslation();
+  const {contentMaxWidth} = useLayout();
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center' as const, width: '100%', flex: 1} : {flex: 1}}>
       {/* Description banner */}
       <View style={styles.descriptionBanner}>
         <Text style={styles.descriptionText}>
@@ -293,6 +296,7 @@ export function SplitTunnelScreen() {
       ) : (
         <IosSplitTunnel />
       )}
+      </View>
     </SafeAreaView>
   );
 }

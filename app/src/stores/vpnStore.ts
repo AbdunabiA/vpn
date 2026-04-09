@@ -3,6 +3,16 @@ import * as vpnBridge from '../services/vpnBridge';
 import type {ConnectionState, TunnelStatus, TrafficStats} from '../types/vpn';
 import type {Server, ServerConfig} from '../types/api';
 
+// Module-level timeout handle — kept outside Zustand state to avoid type hacks
+let disconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function clearDisconnectTimeout() {
+  if (disconnectTimeout) {
+    clearTimeout(disconnectTimeout);
+    disconnectTimeout = null;
+  }
+}
+
 interface VpnState {
   connectionState: ConnectionState;
   currentServer: Server | null;
@@ -49,6 +59,9 @@ export const useVpnStore = create<VpnState>((set, get) => ({
       return;
     }
 
+    // Clear any stale disconnect timeout from a previous disconnect
+    clearDisconnectTimeout();
+
     set({
       _connecting: true,
       connectionState: 'connecting',
@@ -91,6 +104,9 @@ export const useVpnStore = create<VpnState>((set, get) => ({
       return;
     }
 
+    // Clear any previous disconnect timeout (handles double-disconnect)
+    clearDisconnectTimeout();
+
     set({connectionState: 'disconnecting'});
 
     try {
@@ -98,7 +114,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
 
       // Don't eagerly set 'disconnected' — wait for native status broadcast.
       // Use a safety timeout: if native doesn't confirm within 5s, force it.
-      const timeout = setTimeout(() => {
+      disconnectTimeout = setTimeout(() => {
         if (get().connectionState === 'disconnecting') {
           console.warn('[VPN Store] Native disconnect timeout — forcing state');
           set({
@@ -111,12 +127,8 @@ export const useVpnStore = create<VpnState>((set, get) => ({
             reconnectAttempt: 0,
           });
         }
+        disconnectTimeout = null;
       }, 5000);
-
-      // If updateStatus fires with 'disconnected' before timeout, it will
-      // update the state and this timeout becomes a no-op.
-      // Store the timeout so it can be cleaned up if needed.
-      (get() as any)._disconnectTimeout = timeout;
     } catch (err) {
       set({
         connectionState: 'error',
@@ -152,8 +164,7 @@ export const useVpnStore = create<VpnState>((set, get) => ({
 
     // If native confirms 'disconnected', clear stats and cancel safety timeout
     if (status.state === 'disconnected') {
-      const timeout = (get() as any)._disconnectTimeout;
-      if (timeout) clearTimeout(timeout);
+      clearDisconnectTimeout();
       set({
         connectionState: 'disconnected',
         connectedAt: null,

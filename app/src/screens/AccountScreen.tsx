@@ -145,7 +145,7 @@ export function AccountScreen() {
 
         {/* Avatar + Name header */}
         <View style={styles.headerCard}>
-          <View style={[styles.avatarCircle, {width: 72 * scale, height: 72 * scale}]}>
+          <View style={[styles.avatarCircle, {width: 72 * scale, height: 72 * scale, borderRadius: 36 * scale}]}>
             <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
           </View>
 
