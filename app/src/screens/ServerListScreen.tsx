@@ -13,6 +13,7 @@ import {useNavigation} from '@react-navigation/native';
 import {ServerCard} from '../components/ServerCard';
 import {useServerList} from '../hooks/useServerList';
 import {useServerStore} from '../stores/serverStore';
+import {useLayout} from '../hooks/useLayout';
 import {colors, typography, spacing} from '../theme';
 import type {Server} from '../types/api';
 
@@ -21,6 +22,7 @@ export function ServerListScreen() {
   const navigation = useNavigation();
   const {data: servers, isLoading, error} = useServerList();
   const {selectedServer, favoriteIds, selectServer, toggleFavorite} = useServerStore();
+  const {contentMaxWidth} = useLayout();
 
   // Group servers by region
   const sections = useMemo(() => {
@@ -85,7 +87,7 @@ export function ServerListScreen() {
             ))}
           </View>
         )}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}
       />
     </SafeAreaView>
   );

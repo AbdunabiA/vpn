@@ -391,12 +391,18 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
     private fun requestBatteryOptimizationExemption(activity: Activity) {
         try {
             val pm = activity.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(activity.packageName)) {
-                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = android.net.Uri.parse("package:${activity.packageName}")
-                }
-                activity.startActivity(intent)
+            if (pm.isIgnoringBatteryOptimizations(activity.packageName)) return
+
+            // Only ask once — don't pester the user on every connect
+            val prefs = activity.getSharedPreferences("vpn_prefs", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("battery_opt_asked", false)) return
+
+            prefs.edit().putBoolean("battery_opt_asked", true).apply()
+
+            val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = android.net.Uri.parse("package:${activity.packageName}")
             }
+            activity.startActivity(intent)
         } catch (_: Throwable) { }
     }
 

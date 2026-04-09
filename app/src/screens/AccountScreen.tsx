@@ -14,6 +14,7 @@ import {useTranslation} from 'react-i18next';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useAuthStore} from '../stores/authStore';
+import {useLayout} from '../hooks/useLayout';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {RootStackParamList} from '../navigation/RootNavigator';
 
@@ -57,6 +58,7 @@ export function AccountScreen() {
   const {t} = useTranslation();
   const navigation = useNavigation<NavigationProp>();
   const {user, isAuthenticated, fetchAccount, updateProfile} = useAuthStore();
+  const {contentMaxWidth, scale} = useLayout();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -138,12 +140,12 @@ export function AccountScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}
         showsVerticalScrollIndicator={false}>
 
         {/* Avatar + Name header */}
         <View style={styles.headerCard}>
-          <View style={styles.avatarCircle}>
+          <View style={[styles.avatarCircle, {width: 72 * scale, height: 72 * scale}]}>
             <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
           </View>
 
@@ -249,6 +251,7 @@ export function AccountScreen() {
 
 function LoginView() {
   const {t} = useTranslation();
+  const {contentMaxWidth} = useLayout();
   const {login, register, isLoading} = useAuthStore();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -287,7 +290,7 @@ function LoginView() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.loginContent}>
+      <View style={[styles.loginContent, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
         <Text style={styles.loginTitle}>
           {isRegisterMode ? t('account.register') : t('account.login')}
         </Text>

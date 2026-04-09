@@ -1,4 +1,5 @@
 import {useEffect, useCallback, useRef} from 'react';
+import NetInfo from '@react-native-community/netinfo';
 import {useVpnStore} from '../stores/vpnStore';
 import {useServerStore} from '../stores/serverStore';
 import {useSettingsStore} from '../stores/settingsStore';
@@ -329,6 +330,75 @@ export function useVpnConnection() {
 
     return () => clearInterval(interval);
   }, [connectionState, connectionId]);
+
+  // Detect network recovery and trigger reconnection when VPN was active
+  const wasConnectedRef = useRef(false);
+
+  useEffect(() => {
+    if (connectionState === 'connected') {
+      wasConnectedRef.current = true;
+    } else if (
+      connectionState === 'disconnected' ||
+      connectionState === 'error'
+    ) {
+      // Reset only on manual disconnect (auto-reconnect keeps it true)
+      if (isManualDisconnectRef.current) {
+        wasConnectedRef.current = false;
+      }
+    }
+  }, [connectionState]);
+
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const isConnected = state.isConnected && state.isInternetReachable !== false;
+      const vpnState = useVpnStore.getState().connectionState;
+
+      // Network came back while VPN is in error/disconnected state and wasn't manually disconnected
+      if (
+        isConnected &&
+        wasConnectedRef.current &&
+        !isManualDisconnectRef.current &&
+        autoReconnect &&
+        (vpnState === 'error' || vpnState === 'disconnected') &&
+        (selectedServer || currentServer)
+      ) {
+        console.log('[VPN Connection] Network recovered — attempting reconnect');
+        wasConnectedRef.current = false; // prevent duplicate triggers
+
+        // Small delay to let the network stabilize
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(async () => {
+          const server = selectedServer || currentServer;
+          if (!server) return;
+
+          try {
+            const {data} = await api.get<{data: ServerConfig}>(
+              `/servers/${server.id}/config`,
+            );
+            const config = data.data;
+            const queue = buildProtocolQueue(config, userProtocol);
+            fallbackRef.current = {queue, index: 0, attemptPerProtocol: 0, config};
+
+            const reservedId = await reserveConnection(server.id);
+            if (!reservedId) {
+              useVpnStore.setState({connectionState: 'error', error: 'Device limit reached'});
+              return;
+            }
+
+            useVpnStore.setState({connectionState: 'reconnecting'});
+            setReconnectAttempt(1);
+
+            const configWithProtocol = {...config, protocol: queue[0] || config.protocol};
+            await storeConnect(server, configWithProtocol);
+          } catch (err) {
+            console.error('[VPN Connection] Network recovery reconnect failed:', err);
+          }
+        }, 2000);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [autoReconnect, selectedServer, currentServer, userProtocol, reserveConnection, storeConnect, setReconnectAttempt]);
 
   const connect = useCallback(async () => {
     const server = selectedServer;

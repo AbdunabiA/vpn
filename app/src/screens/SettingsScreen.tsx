@@ -12,6 +12,7 @@ import {useTranslation} from 'react-i18next';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useSettingsStore} from '../stores/settingsStore';
+import {useLayout} from '../hooks/useLayout';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {VpnProtocol} from '../types/vpn';
 import type {RootStackParamList} from '../navigation/RootNavigator';
@@ -72,6 +73,7 @@ export function SettingsScreen() {
   const {t} = useTranslation();
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const {contentMaxWidth} = useLayout();
   const {
     protocol,
     killSwitch,
@@ -93,7 +95,7 @@ export function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
         {/* Protocol Selection */}
         <Text style={styles.sectionTitle}>{t('settings.protocol')}</Text>
         <View style={styles.card}>

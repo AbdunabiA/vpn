@@ -9,6 +9,7 @@ import {SpeedIndicator} from '../components/SpeedIndicator';
 import {StatusBadge} from '../components/StatusBadge';
 import {useVpnConnection} from '../hooks/useVpnConnection';
 import {useServerStore} from '../stores/serverStore';
+import {useLayout} from '../hooks/useLayout';
 import {colors, typography, spacing} from '../theme';
 import type {RootStackParamList} from '../navigation/RootNavigator';
 
@@ -28,6 +29,7 @@ export function HomeScreen() {
     toggle,
   } = useVpnConnection();
   const {selectedServer} = useServerStore();
+  const {contentMaxWidth} = useLayout();
 
   // Connection timer
   const [elapsed, setElapsed] = useState('00:00:00');
@@ -53,7 +55,7 @@ export function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
+      <View style={[styles.content, contentMaxWidth ? {maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%'} : undefined]}>
         {/* Status */}
         <View style={styles.statusSection}>
           <StatusBadge state={connectionState} />

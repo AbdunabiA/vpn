@@ -7,7 +7,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
-import {colors, typography, spacing, borderRadius} from '../theme';
+import {colors, typography, spacing} from '../theme';
+import {useLayout} from '../hooks/useLayout';
 import type {ConnectionState} from '../types/vpn';
 
 interface ConnectButtonProps {
@@ -27,6 +28,7 @@ const STATE_COLORS: Record<ConnectionState, string> = {
 
 export function ConnectButton({state, onPress}: ConnectButtonProps) {
   const {t} = useTranslation();
+  const {scale} = useLayout();
   const isTransitioning = state === 'connecting' || state === 'disconnecting' || state === 'reconnecting' || state === 'switching_protocol';
   const buttonColor = STATE_COLORS[state];
 
@@ -40,6 +42,9 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
     error: t('common.retry'),
   }[state];
 
+  const btnSize = BUTTON_SIZE * scale;
+  const iconSize = 44 * scale;
+
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -47,19 +52,17 @@ export function ConnectButton({state, onPress}: ConnectButtonProps) {
       activeOpacity={0.8}
       style={styles.wrapper}>
       {/* Outer glow ring */}
-      <View style={[styles.outerRing, {borderColor: buttonColor + '30'}]}>
+      <View style={[styles.ring, {width: btnSize + 60 * scale, height: btnSize + 60 * scale, borderRadius: (btnSize + 60 * scale) / 2, borderColor: buttonColor + '30'}]}>
         {/* Inner glow ring */}
-        <View style={[styles.innerRing, {borderColor: buttonColor + '60'}]}>
+        <View style={[styles.ring, {width: btnSize + 30 * scale, height: btnSize + 30 * scale, borderRadius: (btnSize + 30 * scale) / 2, borderColor: buttonColor + '60'}]}>
           {/* Main button */}
-          <View style={[styles.button, {backgroundColor: buttonColor + '20', borderColor: buttonColor}]}>
+          <View style={[styles.button, {width: btnSize, height: btnSize, borderRadius: btnSize / 2, backgroundColor: buttonColor + '20', borderColor: buttonColor}]}>
             {isTransitioning ? (
               <ActivityIndicator size="large" color={buttonColor} />
             ) : (
-              <>
-                <View style={[styles.powerIcon, {borderColor: buttonColor}]}>
-                  <View style={[styles.powerLine, {backgroundColor: buttonColor}]} />
-                </View>
-              </>
+              <View style={[styles.powerIcon, {width: iconSize, height: iconSize, borderRadius: iconSize / 2, borderColor: buttonColor}]}>
+                <View style={[styles.powerLine, {width: 3 * scale, height: 20 * scale, backgroundColor: buttonColor, marginTop: -8 * scale}]} />
+              </View>
             )}
           </View>
         </View>
@@ -77,43 +80,23 @@ const styles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
   },
-  outerRing: {
-    width: BUTTON_SIZE + 60,
-    height: BUTTON_SIZE + 60,
-    borderRadius: (BUTTON_SIZE + 60) / 2,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  innerRing: {
-    width: BUTTON_SIZE + 30,
-    height: BUTTON_SIZE + 30,
-    borderRadius: (BUTTON_SIZE + 30) / 2,
+  ring: {
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   button: {
-    width: BUTTON_SIZE,
-    height: BUTTON_SIZE,
-    borderRadius: BUTTON_SIZE / 2,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   powerIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     borderWidth: 3,
     borderTopColor: 'transparent',
     alignItems: 'center',
   },
   powerLine: {
-    width: 3,
-    height: 20,
     borderRadius: 2,
-    marginTop: -8,
   },
   label: {
     ...typography.bodyBold,
