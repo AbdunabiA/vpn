@@ -59,6 +59,25 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     // Loaded from SharedPreferences on start; updated via ACTION_SET_EXCLUDED_APPS.
     private var excludedApps: List<String> = emptyList()
 
+    // Traffic stats — UID-based byte counters from android.net.TrafficStats.
+    // We capture a baseline on connect so the broadcast values represent only
+    // the bytes consumed during the current VPN session, not the lifetime UID
+    // counters maintained since device boot.
+    private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var statsBaselineRx: Long = 0
+    private var statsBaselineTx: Long = 0
+    private var statsLastRx: Long = 0
+    private var statsLastTx: Long = 0
+    private var statsLastTime: Long = 0
+    private val statsRunnable = object : Runnable {
+        override fun run() {
+            if (isRunning) {
+                broadcastTrafficStats()
+                statsHandler.postDelayed(this, STATS_INTERVAL_MS)
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "TunnelVpnService"
         private const val CHANNEL_ID = "vpn_channel"
@@ -78,8 +97,13 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
         // Broadcast actions TO the main process
         const val BROADCAST_VPN_STATUS = "com.vpnapp.VPN_STATUS"
         const val BROADCAST_VPN_CONNECT_RESULT = "com.vpnapp.VPN_CONNECT_RESULT"
+        const val BROADCAST_VPN_STATS = "com.vpnapp.VPN_STATS"
         const val EXTRA_STATUS_JSON = "status_json"
         const val EXTRA_SUCCESS = "success"
+        const val EXTRA_STATS_JSON = "stats_json"
+
+        // How often to broadcast traffic stats while the tunnel is up.
+        private const val STATS_INTERVAL_MS = 1000L
 
         // SharedPreferences
         const val PREFS_NAME = "vpn_prefs"
@@ -258,6 +282,87 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
         sendBroadcast(intent)
     }
 
+    // MARK: - Traffic stats polling
+
+    /**
+     * Start the 1-second traffic stats poller. Captures the current per-UID
+     * byte counters as the session baseline so subsequent broadcasts report
+     * only what was consumed during this VPN session.
+     *
+     * Uses TrafficStats by UID (not by interface) because the interface name
+     * Android assigns to the TUN device varies and the API by UID covers all
+     * traffic produced by our app process and the :vpn process. The non-VPN
+     * traffic (API calls to vpnapi, ad SDK) is small relative to tunnel data
+     * and acceptable for a UI display.
+     */
+    private fun startStatsPolling() {
+        try {
+            val uid = android.os.Process.myUid()
+            statsBaselineRx = android.net.TrafficStats.getUidRxBytes(uid).coerceAtLeast(0)
+            statsBaselineTx = android.net.TrafficStats.getUidTxBytes(uid).coerceAtLeast(0)
+            statsLastRx = statsBaselineRx
+            statsLastTx = statsBaselineTx
+            statsLastTime = android.os.SystemClock.elapsedRealtime()
+        } catch (e: Throwable) {
+            Log.w(TAG, "startStatsPolling: failed to read baseline: ${e.message}")
+            statsBaselineRx = 0
+            statsBaselineTx = 0
+            statsLastRx = 0
+            statsLastTx = 0
+            statsLastTime = android.os.SystemClock.elapsedRealtime()
+        }
+        statsHandler.removeCallbacks(statsRunnable)
+        statsHandler.postDelayed(statsRunnable, STATS_INTERVAL_MS)
+    }
+
+    /** Stop the stats poller. Idempotent. */
+    private fun stopStatsPolling() {
+        statsHandler.removeCallbacks(statsRunnable)
+    }
+
+    /**
+     * Read current per-UID byte counters and broadcast a TrafficStats payload.
+     * Session bytes = current - baseline.
+     * Speed = (current - last_tick) / seconds_since_last_tick.
+     */
+    private fun broadcastTrafficStats() {
+        try {
+            val uid = android.os.Process.myUid()
+            val rx = android.net.TrafficStats.getUidRxBytes(uid).coerceAtLeast(0)
+            val tx = android.net.TrafficStats.getUidTxBytes(uid).coerceAtLeast(0)
+            val now = android.os.SystemClock.elapsedRealtime()
+
+            val sessionRx = (rx - statsBaselineRx).coerceAtLeast(0)
+            val sessionTx = (tx - statsBaselineTx).coerceAtLeast(0)
+
+            // Guard against zero-divide and counter rollover (uid stats reset
+            // on package reinstall, which can briefly produce negative deltas).
+            val deltaMs = (now - statsLastTime).coerceAtLeast(1)
+            val deltaSec = deltaMs / 1000.0
+            val speedDownBps = ((rx - statsLastRx).coerceAtLeast(0)).toDouble() / deltaSec
+            val speedUpBps = ((tx - statsLastTx).coerceAtLeast(0)).toDouble() / deltaSec
+
+            statsLastRx = rx
+            statsLastTx = tx
+            statsLastTime = now
+
+            val json = JSONObject().apply {
+                put("bytes_up", sessionTx)
+                put("bytes_down", sessionRx)
+                put("speed_up_bps", speedUpBps)
+                put("speed_down_bps", speedDownBps)
+            }.toString()
+
+            val intent = Intent(BROADCAST_VPN_STATS).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_STATS_JSON, json)
+            }
+            sendBroadcast(intent)
+        } catch (e: Throwable) {
+            Log.w(TAG, "broadcastTrafficStats error: ${e.message}")
+        }
+    }
+
     // MARK: - VPN lifecycle
 
     /**
@@ -397,6 +502,9 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
             isStarting = false
             writeCrashBreadcrumb("step10: VPN FULLY CONNECTED")
             updateNotification("Connected")
+            // Begin broadcasting traffic stats every second so the UI counter
+            // updates while the tunnel is up.
+            startStatsPolling()
             // Notify the main process that TUN + tun2socks are fully ready so the
             // JS connect() promise can be resolved.
             broadcastConnectResult(success = true)
@@ -437,6 +545,10 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
         // For manual disconnect, always attempt full cleanup even if isRunning
         // is false — the Go tunnel or TUN fd may still be alive.
         if (!isManual && !isRunning && !killSwitchActive) return
+
+        // Stop stats polling immediately so the JS UI sees the counter freeze
+        // (and reset to 0 once the disconnected status broadcast lands).
+        stopStatsPolling()
 
         val applyKillSwitch = killSwitchEnabled && !isManual
 

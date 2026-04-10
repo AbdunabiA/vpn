@@ -70,6 +70,10 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
                     val success = intent.getBooleanExtra(TunnelVpnService.EXTRA_SUCCESS, false)
                     handleConnectResultBroadcast(success)
                 }
+                TunnelVpnService.BROADCAST_VPN_STATS -> {
+                    val statsJson = intent.getStringExtra(TunnelVpnService.EXTRA_STATS_JSON) ?: return
+                    emitToJS("onVpnStatsUpdated", statsJson)
+                }
             }
         }
     }
@@ -98,6 +102,7 @@ class VpnTurboModule(reactContext: ReactApplicationContext)
         val filter = IntentFilter().apply {
             addAction(TunnelVpnService.BROADCAST_VPN_STATUS)
             addAction(TunnelVpnService.BROADCAST_VPN_CONNECT_RESULT)
+            addAction(TunnelVpnService.BROADCAST_VPN_STATS)
         }
         // RECEIVER_NOT_EXPORTED ensures Android 14+ does not expose the receiver
         // to other apps. setPackage on the sender side provides a second layer.
