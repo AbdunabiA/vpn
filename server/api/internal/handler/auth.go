@@ -19,12 +19,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type registerRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
-}
-
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -36,115 +30,11 @@ type authResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// Register handles POST /auth/register.
-// Creates a new user with hashed email + bcrypt password, returns JWT tokens.
-func Register(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		var req registerRequest
-		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "invalid request body",
-			})
-		}
-
-		if req.Email == "" || len(req.Password) < 8 || len(req.Password) > 72 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "email required, password must be 8-72 characters",
-			})
-		}
-
-		if len(req.Name) < 2 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "name must be at least 2 characters",
-			})
-		}
-
-		if !strings.Contains(req.Email, "@") || len(req.Email) < 5 || len(req.Email) > 255 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "invalid email format",
-			})
-		}
-
-		// Hash email for zero-knowledge storage
-		emailHash := fmt.Sprintf("%x", sha256.Sum256([]byte(req.Email)))
-
-		// Hash password with bcrypt
-		passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			logger.Error("failed to hash password", zap.Error(err))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		// Create user in database
-		passwordHashStr := string(passwordHash)
-		user := model.User{
-			EmailHash:    &emailHash,
-			PasswordHash: &passwordHashStr,
-			FullName:     req.Name,
-		}
-		if err := repository.CreateUser(db, &user); err != nil {
-			if errors.Is(err, repository.ErrDuplicate) {
-				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-					"error": "email already registered",
-				})
-			}
-			logger.Error("failed to create user", zap.Error(err))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		// Create default free subscription.
-		// If this fails we must roll back the user record so registration is
-		// atomic — a user without a subscription would be unusable.
-		sub := model.Subscription{
-			UserID:   user.ID,
-			Plan:     "free",
-			IsActive: true,
-		}
-		if err := repository.CreateSubscription(db, &sub); err != nil {
-			logger.Error("failed to create subscription — rolling back user creation",
-				zap.String("user_id", user.ID),
-				zap.Error(err),
-			)
-			if deleteErr := repository.DeleteUser(db, user.ID); deleteErr != nil {
-				logger.Error("failed to roll back user after subscription creation failure",
-					zap.String("user_id", user.ID),
-					zap.Error(deleteErr),
-				)
-			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		// Generate JWT tokens — new users always start with role "user"
-		tokens, err := generateTokens(user.ID, "free", "user", user.FullName, cfg.JWTSecret)
-		if err != nil {
-			logger.Error("failed to generate tokens", zap.Error(err))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		// Store refresh token session
-		if err := storeRefreshSession(db, user.ID, tokens.RefreshToken); err != nil {
-			logger.Error("failed to store session", zap.Error(err))
-		}
-
-		logger.Info("user registered", zap.String("user_id", user.ID))
-
-		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-			"data": tokens,
-		})
-	}
-}
-
-// Login handles POST /auth/login.
-// Validates credentials against DB and returns JWT tokens.
-func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
+// AdminLogin handles POST /auth/admin-login.
+// Validates email+password against DB and returns JWT tokens ONLY if the user
+// has role='admin'. Non-admin users receive the same "invalid credentials"
+// error as a wrong password (no role-enumeration leak).
+func AdminLogin(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req loginRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -174,13 +64,13 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 					"error": "invalid credentials",
 				})
 			}
-			logger.Error("failed to find user", zap.Error(err))
+			logger.Error("admin-login: failed to find user", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "internal server error",
 			})
 		}
 
-		// Verify password — guest accounts have no password hash
+		// Verify password
 		if user.PasswordHash == nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "invalid credentials",
@@ -192,21 +82,27 @@ func Login(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		// Generate tokens with real user ID, tier, and role
+		// Enforce admin role — non-admins get the same error as wrong password
+		if user.Role != "admin" {
+			logger.Warn("admin-login: non-admin user attempted admin login", zap.String("user_id", user.ID))
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "invalid credentials",
+			})
+		}
+
 		tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, user.FullName, cfg.JWTSecret)
 		if err != nil {
-			logger.Error("failed to generate tokens", zap.Error(err))
+			logger.Error("admin-login: failed to generate tokens", zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "internal server error",
 			})
 		}
 
-		// Store refresh token session
 		if err := storeRefreshSession(db, user.ID, tokens.RefreshToken); err != nil {
-			logger.Error("failed to store session", zap.Error(err))
+			logger.Error("admin-login: failed to store session", zap.Error(err))
 		}
 
-		logger.Info("user logged in", zap.String("user_id", user.ID))
+		logger.Info("admin logged in", zap.String("user_id", user.ID))
 
 		return c.JSON(fiber.Map{
 			"data": tokens,

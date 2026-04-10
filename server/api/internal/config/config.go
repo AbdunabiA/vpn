@@ -18,6 +18,7 @@ type Config struct {
 	StripePriceUltimate string
 	AppDeepLinkScheme   string
 	TunnelVLESSUUID     string
+	MinAppVersion       string
 }
 
 // Load reads configuration from environment variables.
@@ -38,6 +39,7 @@ func Load() (*Config, error) {
 		StripePriceUltimate: getEnv("STRIPE_PRICE_ULTIMATE", "price_PLACEHOLDER_ULTIMATE"),
 		AppDeepLinkScheme:   getEnv("APP_DEEP_LINK", "vpnapp"),
 		TunnelVLESSUUID:     getEnv("TUNNEL_VLESS_UUID", ""),
+		MinAppVersion:       getEnv("MIN_APP_VERSION", "2.0.0"),
 	}
 
 	if cfg.JWTSecret == "" {

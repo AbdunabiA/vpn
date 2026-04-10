@@ -66,8 +66,21 @@ func main() {
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Authorization",
+		AllowHeaders: "Origin, Content-Type, Authorization, X-App-Version",
 	}))
+
+	// App version gate — rejects mobile clients below MIN_APP_VERSION.
+	// Bypasses monitoring (/health), Stripe callbacks (/webhook/stripe),
+	// and admin login (/auth/admin-login, which is called from curl or the
+	// web admin panel — neither of which ships an X-App-Version header).
+	app.Use(middleware.AppVersion(
+		cfg.MinAppVersion,
+		logger,
+		"/api/v1/health",
+		"/api/v1/webhook/stripe",
+		"/api/v1/auth/admin-login",
+	))
+
 	// Redis-backed per-user rate limiting. Decodes the JWT (when present) to
 	// key on user ID so the limit applies correctly even before auth middleware runs.
 	app.Use(middleware.RateLimit(redisClient, logger, cfg.JWTSecret))
@@ -76,10 +89,9 @@ func main() {
 	api := app.Group("/api/v1")
 
 	// Public routes (no auth required)
-	api.Post("/auth/register", handler.Register(logger, cfg, db))
-	api.Post("/auth/login", handler.Login(logger, cfg, db))
 	api.Post("/auth/refresh", handler.RefreshToken(logger, cfg, db))
 	api.Post("/auth/guest", handler.GuestLogin(logger, db, cfg))
+	api.Post("/auth/admin-login", handler.AdminLogin(logger, cfg, db))
 	api.Get("/health", handler.Health())
 
 	// Stripe webhook — public route, authenticated via Stripe-Signature header.

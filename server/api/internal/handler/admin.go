@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"vpnapp/server/api/internal/repository"
 
@@ -97,13 +98,21 @@ func AdminGetUser(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 }
 
 // adminUpdateUserRequest defines the fields an admin may change on a user.
+// SubscriptionExpiresAt accepts either a full RFC3339 timestamp
+// (e.g. "2026-05-10T00:00:00Z") or null to clear the expiration.
+// ExtendDays is a convenience: adds N days to the existing expiration
+// (or starts from now if none is set). When both are provided,
+// SubscriptionExpiresAt wins.
 type adminUpdateUserRequest struct {
-	SubscriptionTier string `json:"subscription_tier"`
-	Role             string `json:"role"`
+	SubscriptionTier      string  `json:"subscription_tier"`
+	Role                  string  `json:"role"`
+	SubscriptionExpiresAt *string `json:"subscription_expires_at"`
+	ExtendDays            int     `json:"extend_days"`
 }
 
 // AdminUpdateUser handles PATCH /admin/users/:id.
-// Accepts subscription_tier and/or role; only provided fields are updated.
+// Accepts subscription_tier, role, subscription_expires_at, and/or extend_days.
+// Only provided fields are updated.
 func AdminUpdateUser(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID := c.Params("id")
@@ -136,6 +145,40 @@ func AdminUpdateUser(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 				})
 			}
 			updates["role"] = req.Role
+		}
+
+		// Handle subscription expiration — either explicit timestamp or extend_days.
+		if req.SubscriptionExpiresAt != nil {
+			if *req.SubscriptionExpiresAt == "" {
+				updates["subscription_expires_at"] = nil
+			} else {
+				expires, err := time.Parse(time.RFC3339, *req.SubscriptionExpiresAt)
+				if err != nil {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+						"error": "subscription_expires_at must be RFC3339 (e.g. 2026-05-10T00:00:00Z)",
+					})
+				}
+				updates["subscription_expires_at"] = expires
+			}
+		} else if req.ExtendDays > 0 {
+			// Extend from the current expiration or from now, whichever is later.
+			user, err := repository.FindUserByIDAdmin(db, userID)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+						"error": "user not found",
+					})
+				}
+				logger.Error("admin: failed to load user for extend", zap.Error(err))
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "internal server error",
+				})
+			}
+			base := time.Now()
+			if user.SubscriptionExpiresAt != nil && user.SubscriptionExpiresAt.After(base) {
+				base = *user.SubscriptionExpiresAt
+			}
+			updates["subscription_expires_at"] = base.Add(time.Duration(req.ExtendDays) * 24 * time.Hour)
 		}
 
 		if len(updates) == 0 {

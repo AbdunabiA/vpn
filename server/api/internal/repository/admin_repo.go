@@ -12,7 +12,9 @@ import (
 var errNilDB = fmt.Errorf("database connection is nil")
 
 // ListUsers returns a paginated slice of users and the total matching count.
-// search is matched case-insensitively against the email_hash column when non-empty.
+// search is matched case-insensitively against user id, email_hash, or full_name.
+// Useful for the admin panel's user search — a user_id prefix pasted by a user
+// contacting support will resolve to the correct account.
 // page and limit must both be >= 1; the caller is responsible for validation.
 func ListUsers(db *gorm.DB, page, limit int, search string) ([]model.User, int64, error) {
 	if db == nil {
@@ -21,7 +23,11 @@ func ListUsers(db *gorm.DB, page, limit int, search string) ([]model.User, int64
 	query := db.Model(&model.User{})
 
 	if search != "" {
-		query = query.Where("email_hash ILIKE ?", fmt.Sprintf("%%%s%%", search))
+		like := fmt.Sprintf("%%%s%%", search)
+		query = query.Where(
+			"CAST(id AS TEXT) ILIKE ? OR email_hash ILIKE ? OR full_name ILIKE ?",
+			like, like, like,
+		)
 	}
 
 	var total int64

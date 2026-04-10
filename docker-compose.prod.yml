@@ -50,6 +50,7 @@ services:
       STRIPE_PRICE_PREMIUM: ${STRIPE_PRICE_PREMIUM:-}
       STRIPE_PRICE_ULTIMATE: ${STRIPE_PRICE_ULTIMATE:-}
       TUNNEL_VLESS_UUID: ${TUNNEL_VLESS_UUID:?Set TUNNEL_VLESS_UUID in .env}
+      MIN_APP_VERSION: ${MIN_APP_VERSION:-2.0.0}
     depends_on:
       postgres:
         condition: service_healthy
