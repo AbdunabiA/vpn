@@ -75,12 +75,12 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     //   * Yandex Ads SDK requests
     //
     // The reported numbers therefore reflect the *actual* bytes the user's
-    // cellular/WiFi plan was charged for, not the post-decryption payload
-    // delivered to apps. This is honest and matches what Android's own
+    // cellular/WiFi plan was charged for since the connect button was tapped,
+    // NOT the post-decryption payload delivered to apps. The label "session"
+    // here means "from baseline at connect to now" — it includes any non-tunnel
+    // app traffic produced during the session, not just bytes that flowed
+    // through the tunnel. This is honest and matches what Android's own
     // settings -> Network -> App data usage shows for our package.
-    //
-    // We capture a baseline on connect so broadcast values represent only the
-    // current session, not the lifetime UID counters maintained since boot.
     private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var statsBaselineRx: Long = 0
     private var statsBaselineTx: Long = 0

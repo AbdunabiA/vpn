@@ -9,7 +9,7 @@ import "time"
 // consumed by POST /auth/link (no auth — the caller is a brand-new device
 // that doesn't yet have a token for the target account).
 type LinkCode struct {
-	Code      string    `gorm:"primaryKey;type:varchar(10)" json:"code"`
+	Code      string    `gorm:"primaryKey;type:varchar(6)" json:"code"`
 	UserID    string    `gorm:"not null;index" json:"user_id"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	ExpiresAt time.Time `gorm:"not null;index" json:"expires_at"`

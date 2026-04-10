@@ -32,6 +32,10 @@ interface PlanConfig {
   highlighted: boolean;
 }
 
+// Plan feature lists. The "N devices" bullets MUST match the limits in
+// server/api/internal/model/subscription.go (Free=1, Premium=3, Ultimate=6)
+// otherwise paying users hit a confusing 429 "device limit reached" after
+// connecting more devices than the marketing copy promised.
 const PLANS: PlanConfig[] = [
   {
     id: 'free',
@@ -50,7 +54,7 @@ const PLANS: PlanConfig[] = [
     price: '$4.99',
     period: '/mo',
     features: [
-      '5 devices',
+      '3 devices',
       'Unlimited data',
       '40+ server locations',
       'High speed',
@@ -64,7 +68,7 @@ const PLANS: PlanConfig[] = [
     price: '$9.99',
     period: '/mo',
     features: [
-      '10 devices',
+      '6 devices',
       'Unlimited data',
       '80+ server locations',
       'Maximum speed',

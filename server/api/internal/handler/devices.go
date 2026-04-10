@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -15,10 +16,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// linkCodeTTL controls how long a generated share code is valid for.
-// 5 minutes is short enough that brute-forcing 10^6 codes over the rate
-// limiter is impractical, but long enough to read it aloud over a phone call.
-const linkCodeTTL = 5 * time.Minute
+// errDeviceLimitReached is a sentinel returned from inside the LinkDevice
+// transaction to signal that the owner is at their plan's device cap.
+// The HTTP layer maps this to 403.
+var errDeviceLimitReached = errors.New("device limit reached")
 
 // generateLinkCode returns a 6-digit zero-padded numeric code.
 // Uses crypto/rand so codes are unguessable.
@@ -28,10 +29,15 @@ func generateLinkCode() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// %06d zero-pads so codes like 000_042 are still 6 digits.
 	return padCode(n.Int64()), nil
 }
 
+// padCode returns the 6-digit zero-padded decimal representation of n.
+// The slice is pre-initialised with six '0' bytes; the loop fills digits
+// from the least significant end and exits as soon as n reaches 0, leaving
+// any leading positions as '0'. padCode(0) therefore returns "000000".
+// Inputs >= 1_000_000 are truncated to their last 6 digits — generateLinkCode
+// guarantees this never happens because rand.Int's upper bound is 1_000_000.
 func padCode(n int64) string {
 	s := []byte{'0', '0', '0', '0', '0', '0'}
 	for i := 5; i >= 0 && n > 0; i-- {
@@ -48,7 +54,11 @@ func padCode(n int64) string {
 // Refuses if the caller already has an unexpired code outstanding (one
 // in-flight share at a time per user) or if their device cap is already at
 // the maximum (no point sharing if there is no slot to fill).
-func CreateShareCode(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+//
+// The code lifetime is taken from cfg.LinkCodeTTL so deployments can tune
+// it without redeploying — short enough to defeat brute force, long enough
+// to dictate over a phone call.
+func CreateShareCode(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID := c.Locals("user_id").(string)
 
@@ -99,8 +109,17 @@ func CreateShareCode(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		}
 
 		// Generate a unique code, retrying on the rare collision (1 in 10^6).
+		// More than one retry signals code-space pressure (someone is sharing
+		// at scale, or the table has too many active codes); operators should
+		// investigate if this fires regularly.
 		var code string
 		for attempt := 0; attempt < 5; attempt++ {
+			if attempt > 0 {
+				logger.Warn("share-code: collision retry",
+					zap.Int("attempt", attempt),
+					zap.String("user_id", userID),
+				)
+			}
 			candidate, err := generateLinkCode()
 			if err != nil {
 				logger.Error("share-code: rng failed", zap.Error(err))
@@ -111,7 +130,7 @@ func CreateShareCode(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			lc := &model.LinkCode{
 				Code:      candidate,
 				UserID:    userID,
-				ExpiresAt: time.Now().Add(linkCodeTTL),
+				ExpiresAt: time.Now().Add(cfg.LinkCodeTTL),
 			}
 			if err := repository.CreateLinkCode(db, lc); err != nil {
 				if errors.Is(err, repository.ErrDuplicate) {
@@ -133,38 +152,51 @@ func CreateShareCode(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 
 		logger.Info("share-code created",
 			zap.String("user_id", userID),
-			zap.Int("expires_in_sec", int(linkCodeTTL.Seconds())),
+			zap.Int("expires_in_sec", int(cfg.LinkCodeTTL.Seconds())),
 		)
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"data": fiber.Map{
 				"code":           code,
-				"expires_in_sec": int(linkCodeTTL.Seconds()),
+				"expires_in_sec": int(cfg.LinkCodeTTL.Seconds()),
 			},
 		})
 	}
 }
 
 type linkRequest struct {
-	Code     string `json:"code"`
-	DeviceID string `json:"device_id"`
-	Platform string `json:"platform"`
-	Model    string `json:"model"`
+	Code         string `json:"code"`
+	DeviceID     string `json:"device_id"`
+	DeviceSecret string `json:"device_secret"`
+	Platform     string `json:"platform"`
+	Model        string `json:"model"`
 }
 
 // LinkDevice handles POST /auth/link.
 //
 // The caller is a brand-new device that holds a 6-digit code given out by an
-// existing plan owner. We:
-//   1. Atomically consume the code (one-time use).
-//   2. Reassign the caller's device row to the owner's user_id (or create it).
-//   3. Issue fresh JWT tokens for the owner so the caller's app starts behaving
-//      as if it had logged into the owner's account.
+// existing plan owner. The whole flow runs in a single database transaction
+// so that the code consume, the cap check, and the device reassignment can
+// not race against a concurrent redemption of a different code for the same
+// owner — which would otherwise let the owner's quota be exceeded.
+//
+// Within the transaction:
+//   1. Consume the code (one-time use, fails if expired/missing).
+//   2. Load the owner row and check the cap, taking into account whether
+//      the redeeming device is already bound to the owner (link replay).
+//   3. Reassign the redeeming device row to the owner (or create it if
+//      this is a brand-new device_id).
+//   4. If the previous owner of the device row was an unused anonymous
+//      guest, delete that user — its subscription/sessions cascade.
+//
+// Outside the transaction:
+//   5. Issue fresh JWT tokens for the owner.
 //
 // This endpoint is intentionally NOT auth-protected — the caller is exactly
 // the unauthenticated guest device that wants to attach to a paid account.
 // The version-gate middleware still requires X-App-Version, so old APKs
-// cannot reach this endpoint.
+// cannot reach this endpoint, and the dedicated per-IP rate limit on
+// /auth/link bounds brute-force attempts on the 6-digit code space.
 func LinkDevice(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req linkRequest
@@ -179,86 +211,128 @@ func LinkDevice(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 			})
 		}
 
-		// Atomically claim the code so concurrent redemptions can only succeed once.
-		lc, err := repository.ConsumeLinkCode(db, req.Code)
-		if err != nil {
-			if errors.Is(err, repository.ErrNotFound) {
+		secretHash := hashDeviceSecret(req.DeviceSecret)
+
+		// Outputs of the transaction that the response handler needs.
+		var owner *model.User
+		var orphanedUserID string
+
+		txErr := db.Transaction(func(tx *gorm.DB) error {
+			// 1. Consume the code atomically. The repository helper itself
+			//    runs a sub-transaction; nesting is fine because GORM will
+			//    re-use the outer transaction's connection.
+			lc, err := repository.ConsumeLinkCode(tx, req.Code)
+			if err != nil {
+				return err
+			}
+
+			// 2. Load the owner row.
+			loaded, err := repository.FindUserByID(tx, lc.UserID)
+			if err != nil {
+				return fmt.Errorf("link: owner not found: %w", err)
+			}
+			owner = loaded
+
+			tier := owner.SubscriptionTier
+			if tier == "" {
+				tier = "free"
+			}
+			limits, ok := model.PlanLimits[tier]
+			if !ok {
+				limits = model.PlanLimits["free"]
+			}
+
+			// 3. Capacity check inside the transaction. The redeeming
+			//    device is treated as already-counted if it is currently
+			//    bound to the owner (link replay): otherwise we'd double
+			//    count it after the reassign/insert below.
+			var existingDevice *model.Device
+			if d, err := repository.FindDeviceByDeviceID(tx, req.DeviceID); err == nil {
+				existingDevice = d
+			} else if !errors.Is(err, repository.ErrNotFound) {
+				return fmt.Errorf("link: lookup existing device: %w", err)
+			}
+
+			if limits.MaxDevices != model.UnlimitedDevices {
+				count, err := repository.CountDevicesByUser(tx, owner.ID)
+				if err != nil {
+					return fmt.Errorf("link: count devices: %w", err)
+				}
+				alreadyBoundToOwner := existingDevice != nil && existingDevice.UserID == owner.ID
+				if !alreadyBoundToOwner && count >= int64(limits.MaxDevices) {
+					return errDeviceLimitReached
+				}
+			}
+
+			// 4. Reassign or create the device row.
+			if existingDevice != nil {
+				// Track the previous owner so we can clean up the orphan
+				// guest user after the transaction commits.
+				if existingDevice.UserID != owner.ID {
+					orphanedUserID = existingDevice.UserID
+				}
+				if err := repository.ReassignDeviceUser(tx, req.DeviceID, owner.ID, req.Platform, req.Model, secretHash); err != nil {
+					return fmt.Errorf("link: reassign device: %w", err)
+				}
+			} else {
+				device := model.Device{
+					UserID:           owner.ID,
+					DeviceID:         req.DeviceID,
+					DeviceSecretHash: secretHash,
+					Platform:         req.Platform,
+					Model:            req.Model,
+				}
+				if err := repository.CreateDevice(tx, &device); err != nil {
+					return fmt.Errorf("link: create device: %w", err)
+				}
+			}
+
+			return nil
+		})
+
+		if txErr != nil {
+			if errors.Is(txErr, repository.ErrNotFound) {
+				logger.Warn("link: invalid or expired code",
+					zap.String("device_id", req.DeviceID),
+				)
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 					"error": "invalid or expired code",
 				})
 			}
-			logger.Error("link: consume failed", zap.Error(err))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-
-		// Refuse if the owner's device cap is already full. Counting now and
-		// not at code creation prevents the case where a device leaves the
-		// plan between issuing and redeeming and somebody else claims the slot.
-		owner, err := repository.FindUserByID(db, lc.UserID)
-		if err != nil {
-			logger.Error("link: owner not found", zap.Error(err))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
-		}
-		tier := owner.SubscriptionTier
-		if tier == "" {
-			tier = "free"
-		}
-		limits, ok := model.PlanLimits[tier]
-		if !ok {
-			limits = model.PlanLimits["free"]
-		}
-		if limits.MaxDevices != model.UnlimitedDevices {
-			// Count devices currently bound to the owner. If the redeeming
-			// device is already bound to the owner (link replay), we should
-			// not double-count it — but ReassignDeviceUser is idempotent so
-			// this is just a soft check that prevents over-allocation.
-			count, err := repository.CountDevicesByUser(db, owner.ID)
-			if err != nil {
-				logger.Error("link: count devices failed", zap.Error(err))
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"error": "internal server error",
-				})
-			}
-			// Check whether the redeeming device is already bound to the owner;
-			// if so, the count already includes it and no new slot is needed.
-			alreadyBoundToOwner := false
-			if existing, err := repository.FindDeviceByDeviceID(db, req.DeviceID); err == nil {
-				if existing.UserID == owner.ID {
-					alreadyBoundToOwner = true
-				}
-			}
-			if !alreadyBoundToOwner && count >= int64(limits.MaxDevices) {
+			if errors.Is(txErr, errDeviceLimitReached) {
+				logger.Warn("link: owner device cap reached",
+					zap.String("device_id", req.DeviceID),
+					zap.String("owner_user_id", func() string {
+						if owner != nil {
+							return owner.ID
+						}
+						return ""
+					}()),
+				)
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-					"error":       "owner's device limit reached",
-					"max_devices": limits.MaxDevices,
+					"error": "owner's device limit reached",
 				})
 			}
+			logger.Error("link: transaction failed",
+				zap.String("device_id", req.DeviceID),
+				zap.Error(txErr),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
 		}
 
-		// Reassign or create the device row pointing at the owner.
-		if err := repository.ReassignDeviceUser(db, req.DeviceID, owner.ID); err != nil {
-			if errors.Is(err, repository.ErrNotFound) {
-				device := model.Device{
-					UserID:   owner.ID,
-					DeviceID: req.DeviceID,
-					Platform: req.Platform,
-					Model:    req.Model,
-				}
-				if err := repository.CreateDevice(db, &device); err != nil {
-					logger.Error("link: create device failed", zap.Error(err))
-					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-						"error": "internal server error",
-					})
-				}
-			} else {
-				logger.Error("link: reassign device failed", zap.Error(err))
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"error": "internal server error",
-				})
+		// Best-effort orphan cleanup outside the transaction. If the device
+		// used to belong to an unused anonymous guest with no other devices
+		// and no email, drop it so the users table doesn't accumulate
+		// shells. Failure here is non-fatal; the cleanup scheduler can
+		// pick up the orphan later.
+		if orphanedUserID != "" && orphanedUserID != owner.ID {
+			if err := repository.DeleteOrphanGuestUser(db, orphanedUserID); err != nil && !errors.Is(err, repository.ErrNotFound) {
+				logger.Warn("link: orphan cleanup failed",
+					zap.String("orphan_user_id", orphanedUserID),
+					zap.Error(err),
+				)
 			}
 		}
 

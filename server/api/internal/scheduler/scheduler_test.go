@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"vpnapp/server/api/internal/config"
 	"vpnapp/server/api/internal/scheduler"
 
 	"go.uber.org/zap"
@@ -11,6 +12,16 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// testCfg returns a config with the duration tunables set to sane defaults
+// so the scheduler doesn't have to work with zero values.
+func testCfg() *config.Config {
+	return &config.Config{
+		StaleConnectionAfter: 3 * time.Minute,
+		StaleDeviceAfter:     30 * 24 * time.Hour,
+		LinkCodeTTL:          5 * time.Minute,
+	}
+}
 
 // openTestDB creates an in-memory SQLite database with a minimal sessions table
 // used to verify that DeleteExpiredSessions is called by the scheduler.
@@ -66,7 +77,7 @@ func TestScheduler_StartStop_DoesNotPanic(t *testing.T) {
 	db := openTestDB(t)
 	log := zap.NewNop()
 
-	scheduler.Start(db, log)
+	scheduler.Start(db, log, testCfg())
 	// Give the immediate cleanup goroutine a moment to run.
 	time.Sleep(50 * time.Millisecond)
 	scheduler.Stop()
@@ -81,7 +92,7 @@ func TestScheduler_CleansExpiredSessionsOnStart(t *testing.T) {
 		t.Fatalf("expected 1 session before scheduler starts, got %d", count)
 	}
 
-	scheduler.Start(db, log)
+	scheduler.Start(db, log, testCfg())
 	// The scheduler runs cleanup immediately on start; give it a moment.
 	time.Sleep(100 * time.Millisecond)
 	scheduler.Stop()
@@ -95,7 +106,7 @@ func TestScheduler_StartTwice_IsNoop(t *testing.T) {
 	db := openTestDB(t)
 	log := zap.NewNop()
 
-	scheduler.Start(db, log)
-	scheduler.Start(db, log) // second call must be a no-op, not a panic
+	scheduler.Start(db, log, testCfg())
+	scheduler.Start(db, log, testCfg()) // second call must be a no-op, not a panic
 	scheduler.Stop()
 }

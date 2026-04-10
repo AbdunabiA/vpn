@@ -70,6 +70,22 @@ func newAuthTestDB(t *testing.T) *gorm.DB {
 			created_at          DATETIME,
 			expires_at          DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS devices (
+			id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6)))),
+			user_id             TEXT NOT NULL,
+			device_id           TEXT NOT NULL UNIQUE,
+			device_secret_hash  TEXT,
+			platform            TEXT NOT NULL DEFAULT '',
+			model               TEXT NOT NULL DEFAULT '',
+			first_seen_at       DATETIME,
+			last_seen_at        DATETIME
+		)`,
+		`CREATE TABLE IF NOT EXISTS link_codes (
+			code        TEXT PRIMARY KEY,
+			user_id     TEXT NOT NULL,
+			created_at  DATETIME,
+			expires_at  DATETIME NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if err := db.Exec(stmt).Error; err != nil {

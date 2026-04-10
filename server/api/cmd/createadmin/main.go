@@ -49,10 +49,12 @@ func main() {
 	}
 
 	// Refuse to overwrite an existing account with the same email.
+	// Two checks: a friendly pre-flight lookup, and a unique-constraint
+	// catch on insert in case two concurrent createadmin runs race.
 	emailHash := fmt.Sprintf("%x", sha256.Sum256([]byte(*email)))
-	if existing, err := repository.FindUserByEmailHash(db, emailHash); err == nil && existing != nil {
+	if existing, err := repository.FindUserByEmailHash(db, emailHash); err == nil {
 		log.Fatalf("user with email %s already exists (id=%s, role=%s)", *email, existing.ID, existing.Role)
-	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	} else if !errors.Is(err, repository.ErrNotFound) {
 		log.Fatalf("checking existing user: %v", err)
 	}
 
@@ -70,6 +72,9 @@ func main() {
 		SubscriptionTier: "ultimate",
 	}
 	if err := repository.CreateUser(db, &user); err != nil {
+		if errors.Is(err, repository.ErrDuplicate) {
+			log.Fatalf("user with email %s already exists (concurrent createadmin?)", *email)
+		}
 		log.Fatalf("creating admin user: %v", err)
 	}
 

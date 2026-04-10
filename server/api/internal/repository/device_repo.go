@@ -52,17 +52,49 @@ func TouchDevice(db *gorm.DB, id string) error {
 	return nil
 }
 
-// ReassignDeviceUser updates a device row to belong to a different user_id.
-// Used by the share-code link flow: when a friend redeems a code, their
-// existing device row is rebound to the plan owner so that future
-// connections count against the owner's quota.
-func ReassignDeviceUser(db *gorm.DB, deviceID, newUserID string) error {
+// SetDeviceSecretHash updates the device_secret_hash for an existing device
+// row. Used during the grace-period rollout: legacy devices that had no
+// secret on file get one populated on their first authenticated call.
+func SetDeviceSecretHash(db *gorm.DB, id, secretHash string) error {
+	result := db.Model(&model.Device{}).
+		Where("id = ?", id).
+		Update("device_secret_hash", secretHash)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ReassignDeviceUser updates a device row to belong to a different user_id
+// and refreshes the platform/model/secret bound to it. Used by the
+// share-code link flow: when a friend redeems a code, their existing
+// device row is rebound to the plan owner so that future connections
+// count against the owner's quota. The secret is rotated to whatever the
+// redeeming client just sent (the old owner's secret would let the friend
+// be impersonated by the previous owner).
+//
+// Pass empty strings for platform/model/secretHash to leave those columns
+// unchanged.
+func ReassignDeviceUser(db *gorm.DB, deviceID, newUserID, platform, model_, secretHash string) error {
+	updates := map[string]interface{}{
+		"user_id":      newUserID,
+		"last_seen_at": time.Now(),
+	}
+	if platform != "" {
+		updates["platform"] = platform
+	}
+	if model_ != "" {
+		updates["model"] = model_
+	}
+	if secretHash != "" {
+		updates["device_secret_hash"] = secretHash
+	}
 	result := db.Model(&model.Device{}).
 		Where("device_id = ?", deviceID).
-		Updates(map[string]interface{}{
-			"user_id":      newUserID,
-			"last_seen_at": time.Now(),
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

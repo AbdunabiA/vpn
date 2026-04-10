@@ -69,6 +69,42 @@ func UpdateUserTier(db *gorm.DB, userID, tier string) error {
 	return nil
 }
 
+// DeleteOrphanGuestUser removes a user row IF it has no email_hash (i.e.
+// it was an anonymous guest), no remaining devices, and is not an admin.
+// Used by LinkDevice to clean up the previous owner of a device row that
+// was just rebound to a plan owner via a share code.
+//
+// Returns ErrNotFound when the user does not exist or does not match the
+// "orphan guest" pattern. Other delete failures (FK, etc.) are returned
+// as-is.
+//
+// The cascading FKs on devices, sessions, and subscriptions take care of
+// removing the dependent rows; we do not need to delete them by hand.
+func DeleteOrphanGuestUser(db *gorm.DB, userID string) error {
+	if db == nil {
+		return errNilDB
+	}
+	// Confirm the user is a true orphan: no email, no admin role, no devices.
+	var user model.User
+	if err := db.Where("id = ? AND email_hash IS NULL AND role <> 'admin'", userID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var deviceCount int64
+	if err := db.Model(&model.Device{}).Where("user_id = ?", userID).Count(&deviceCount).Error; err != nil {
+		return err
+	}
+	if deviceCount > 0 {
+		return ErrNotFound // not an orphan, still in use
+	}
+	if err := db.Delete(&model.User{}, "id = ?", userID).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
 // UpdateUserName sets the full_name on the users row identified by id.
 func UpdateUserName(db *gorm.DB, userID, fullName string) error {
 	result := db.Model(&model.User{}).

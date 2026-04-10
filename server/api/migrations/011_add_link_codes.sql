@@ -10,10 +10,10 @@
 -- Codes expire after a few minutes regardless of redemption.
 
 CREATE TABLE IF NOT EXISTS link_codes (
-    code        VARCHAR(10) PRIMARY KEY,
-    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
-    expires_at  TIMESTAMP   NOT NULL
+    code        VARCHAR(6) PRIMARY KEY,
+    user_id     UUID       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMP  NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMP  NOT NULL
 );
 
 -- Cleanup index — the scheduler will periodically delete expired codes

@@ -1,0 +1,22 @@
+-- Adds the device-secret column to the devices table.
+--
+-- The threat: device_id alone (ANDROID_ID / IDFV) was acting as a bearer
+-- credential — anyone who learned a victim's device_id (via a leaked log,
+-- a sibling app, or sniffing __DEV__ HTTP traffic) could call /auth/guest
+-- with that id and receive valid tokens for the victim's account, including
+-- premium tokens.
+--
+-- The mitigation: pair the device_id with a 32-byte random secret generated
+-- on first launch and stored in the app's private storage. Only the SHA-256
+-- hash is persisted on the server, so a database leak does not enable
+-- impersonation. Subsequent /auth/guest calls must present the matching
+-- secret to receive the existing user's tokens; mismatched calls fall back
+-- to minting a fresh anonymous user (no error, no enumeration).
+--
+-- The column is NULL-able to allow a smooth grace-period rollout: existing
+-- devices created before the secret was introduced authenticate by
+-- device_id alone the first time they call /auth/guest after the upgrade,
+-- and the server stores their secret hash on that call. Subsequent calls
+-- enforce the hash.
+
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_secret_hash VARCHAR(64);

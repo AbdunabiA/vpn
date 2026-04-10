@@ -197,7 +197,12 @@ export function AccountScreen() {
       {
         text: t('account.logout'),
         style: 'destructive',
-        onPress: () => useAuthStore.getState().logout(),
+        onPress: () => {
+          // logout returns a promise; fire-and-forget is fine because the
+          // store updates state before awaiting AsyncStorage and the UI
+          // re-renders immediately.
+          void useAuthStore.getState().logout();
+        },
       },
     ]);
   }

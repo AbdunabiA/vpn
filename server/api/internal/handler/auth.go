@@ -172,10 +172,27 @@ func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Han
 // guestLoginRequest is the body sent by the mobile app on /auth/guest.
 // All fields are optional; older clients that omit device_id will still
 // get a fresh anonymous account on every call (legacy behaviour).
+//
+// device_secret pairs with device_id to defeat impersonation by knowledge
+// of device_id alone. The client generates a random 32-byte secret on
+// first launch and stores it in app-private storage; only the SHA-256 hash
+// is persisted on the server. See migration 012 for the threat model.
 type guestLoginRequest struct {
-	DeviceID string `json:"device_id"`
-	Platform string `json:"platform"`
-	Model    string `json:"model"`
+	DeviceID     string `json:"device_id"`
+	DeviceSecret string `json:"device_secret"`
+	Platform     string `json:"platform"`
+	Model        string `json:"model"`
+}
+
+// hashDeviceSecret returns the lowercase hex SHA-256 of the given secret.
+// Returns "" for an empty input so the caller can distinguish "no secret
+// provided" from "valid empty hash".
+func hashDeviceSecret(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return fmt.Sprintf("%x", sum)
 }
 
 // GuestLogin handles POST /auth/guest.
@@ -186,6 +203,16 @@ type guestLoginRequest struct {
 // "share code" link flow — the same physical device always maps to the
 // same account.
 //
+// Authentication of the device is two-factor:
+//   - device_id: the OS-issued identifier (ANDROID_ID / IDFV)
+//   - device_secret: a 32-byte random value the client generates on first
+//     launch and stores in app-private storage
+//
+// On match the existing user is returned. On secret mismatch the call
+// silently falls through to the "mint a fresh user" path — no error, no
+// enumeration. Legacy device rows that have no secret on file accept the
+// first secret presented and store its hash (grace-period rollout).
+//
 // Without a device_id, the legacy behaviour is preserved: a fresh
 // anonymous user_id is minted on every call.
 func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handler {
@@ -193,10 +220,35 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 		var req guestLoginRequest
 		_ = c.BodyParser(&req) // body is optional
 
+		secretHash := hashDeviceSecret(req.DeviceSecret)
+
 		// Fast path: known device — reuse the bound user, no DB churn beyond
-		// a touch.
+		// a touch (and secret-hash population for legacy rows).
 		if req.DeviceID != "" {
 			if device, err := repository.FindDeviceByDeviceID(db, req.DeviceID); err == nil {
+				// Verify the secret. Two acceptable cases:
+				//   1. row has hash AND request hash matches → ok
+				//   2. row has empty hash AND request provided one → ok, store it
+				// Anything else (mismatch, or empty hash + empty request) → fall
+				// through to fresh-user path. Empty + empty is safe because
+				// such legacy rows will be rejected after the grace period;
+				// it just means the client doesn't yet send a secret.
+				switch {
+				case device.DeviceSecretHash != "" && device.DeviceSecretHash == secretHash:
+					// authenticated
+				case device.DeviceSecretHash == "" && secretHash != "":
+					// legacy row, populate the hash on first secret-bearing call
+					_ = repository.SetDeviceSecretHash(db, device.ID, secretHash)
+				case device.DeviceSecretHash == "" && secretHash == "":
+					// legacy row, legacy client — accept (grace period)
+				default:
+					// secret mismatch — silently fall through to mint a fresh user
+					logger.Warn("guest login: device secret mismatch",
+						zap.String("device_id", req.DeviceID),
+					)
+					goto freshUser
+				}
+
 				_ = repository.TouchDevice(db, device.ID)
 				user, err := repository.FindUserByID(db, device.UserID)
 				if err != nil {
@@ -226,6 +278,7 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 				// Fall through to fresh-user path.
 			}
 		}
+	freshUser:
 
 		// Slow path: brand-new device (or device_id not provided). Mint a
 		// fresh anonymous user, free subscription, and (when device_id is
@@ -265,21 +318,43 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 			})
 		}
 
-		// Bind device to the freshly-created user.
+		// Bind device to the freshly-created user. We always create a NEW
+		// row here even if the secret mismatched on a row with the same
+		// device_id — that old row stays in the database, owned by its old
+		// user, and the legitimate owner can still authenticate against it.
+		// (This is the case where a leaked device_id was used by an attacker:
+		// they get a fresh anonymous account, the real owner is unaffected.)
+		//
+		// However, the unique index on devices(device_id) means we can't
+		// insert a second row with the same device_id. To handle this we
+		// only insert when no row exists; otherwise we leave the existing
+		// row alone and the attacker is bound to a brand-new user with no
+		// device record at all.
 		if req.DeviceID != "" {
-			device := model.Device{
-				UserID:   user.ID,
-				DeviceID: req.DeviceID,
-				Platform: req.Platform,
-				Model:    req.Model,
-			}
-			if err := repository.CreateDevice(db, &device); err != nil {
-				// Non-fatal: if a race created the device row in parallel, the
-				// next call to /auth/guest will hit the fast path. Just log.
-				logger.Warn("guest login: device bind failed",
-					zap.String("user_id", user.ID),
+			if existing, err := repository.FindDeviceByDeviceID(db, req.DeviceID); err != nil && errors.Is(err, repository.ErrNotFound) {
+				device := model.Device{
+					UserID:           user.ID,
+					DeviceID:         req.DeviceID,
+					DeviceSecretHash: secretHash,
+					Platform:         req.Platform,
+					Model:            req.Model,
+				}
+				if err := repository.CreateDevice(db, &device); err != nil {
+					// Non-fatal: if a race created the device row in parallel, the
+					// next call to /auth/guest will hit the fast path. Just log.
+					logger.Warn("guest login: device bind failed",
+						zap.String("user_id", user.ID),
+						zap.String("device_id", req.DeviceID),
+						zap.Error(err),
+					)
+				}
+			} else if err == nil {
+				// Existing row stayed put because the secret didn't match.
+				// Log for security ops.
+				logger.Warn("guest login: minted fresh user for device with mismatched secret",
 					zap.String("device_id", req.DeviceID),
-					zap.Error(err),
+					zap.String("existing_user_id", existing.UserID),
+					zap.String("new_user_id", user.ID),
 				)
 			}
 		}

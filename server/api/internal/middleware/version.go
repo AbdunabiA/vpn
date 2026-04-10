@@ -58,14 +58,24 @@ func (a semver) less(b semver) bool {
 	return a.patch < b.patch
 }
 
+// SkipRule narrows a version-gate bypass to a specific (method, path) pair
+// so that, for example, "POST /api/v1/health" is still gated even though
+// "GET /api/v1/health" is not. This avoids the surprising broad-bypass
+// behaviour of matching by path alone.
+type SkipRule struct {
+	Method string
+	Path   string
+}
+
 // AppVersion returns middleware that enforces a minimum client version.
 // Clients must send the X-App-Version header on every request. Requests whose
 // version is missing, malformed, or below minVersion receive 426 Upgrade Required.
 //
-// Paths listed in skipPaths bypass the check entirely — intended for /health,
-// /webhook/stripe (called by Stripe servers, not the app), and /auth/admin-login
-// (callable from curl/web admin without the mobile header).
-func AppVersion(minVersion string, logger *zap.Logger, skipPaths ...string) fiber.Handler {
+// SkipRules bypass the check only when both the method and the path match.
+// Intended for GET /health, POST /webhook/stripe (called by Stripe servers,
+// not the app), and POST /auth/admin-login (callable from curl/web admin
+// without the mobile header).
+func AppVersion(minVersion string, logger *zap.Logger, skipRules ...SkipRule) fiber.Handler {
 	minParsed, ok := parseSemver(minVersion)
 	if !ok {
 		// Misconfiguration — fail fast at startup rather than silently allowing all traffic.
@@ -73,13 +83,20 @@ func AppVersion(minVersion string, logger *zap.Logger, skipPaths ...string) fibe
 	}
 	logger.Info("app version gate enabled", zap.String("min_version", minVersion))
 
-	skipSet := make(map[string]struct{}, len(skipPaths))
-	for _, p := range skipPaths {
-		skipSet[p] = struct{}{}
+	type key struct{ method, path string }
+	skipSet := make(map[key]struct{}, len(skipRules))
+	for _, r := range skipRules {
+		skipSet[key{r.Method, r.Path}] = struct{}{}
 	}
 
 	return func(c *fiber.Ctx) error {
-		if _, skip := skipSet[c.Path()]; skip {
+		// Normalise the path to strip any trailing slash so /health and
+		// /health/ behave the same way.
+		path := c.Path()
+		if len(path) > 1 && path[len(path)-1] == '/' {
+			path = path[:len(path)-1]
+		}
+		if _, skip := skipSet[key{c.Method(), path}]; skip {
 			return c.Next()
 		}
 

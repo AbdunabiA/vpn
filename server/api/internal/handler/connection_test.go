@@ -70,6 +70,17 @@ func newHandlerTestDB(t *testing.T) *gorm.DB {
 			status TEXT NOT NULL DEFAULT 'connected',
 			last_heartbeat_at DATETIME
 		);
+		CREATE TABLE IF NOT EXISTS users (
+			id                      TEXT PRIMARY KEY,
+			email_hash              TEXT,
+			password_hash           TEXT,
+			full_name               TEXT NOT NULL DEFAULT '',
+			subscription_tier       TEXT NOT NULL DEFAULT 'free',
+			subscription_expires_at DATETIME,
+			role                    TEXT NOT NULL DEFAULT 'user',
+			created_at              DATETIME,
+			updated_at              DATETIME
+		);
 	`
 	if err := db.Exec(ddl).Error; err != nil {
 		t.Fatalf("failed to create test tables: %v", err)
@@ -100,10 +111,31 @@ func seedActiveServer(t *testing.T, db *gorm.DB) *model.VPNServer {
 	return srv
 }
 
+// seedUserRow inserts a users row with the given id and tier so that
+// RegisterConnection's live tier read finds something. The row is inserted
+// idempotently so callers can call this multiple times for the same user.
+func seedUserRow(t *testing.T, db *gorm.DB, userID, tier string) {
+	t.Helper()
+	if tier == "" {
+		tier = "free"
+	}
+	if err := db.Exec(
+		`INSERT OR IGNORE INTO users (id, full_name, subscription_tier, role)
+		 VALUES (?, ?, ?, 'user')`,
+		userID, "test_"+userID[:6], tier,
+	).Error; err != nil {
+		t.Fatalf("seedUserRow: %v", err)
+	}
+}
+
 // buildApp constructs a Fiber app with the three connection routes and a
 // middleware that injects user_id and tier locals — simulating an authenticated
-// request.
-func buildApp(db *gorm.DB, userID, tier string) *fiber.App {
+// request. The matching users row is seeded so RegisterConnection's live tier
+// read returns the expected tier.
+func buildApp(t *testing.T, db *gorm.DB, userID, tier string) *fiber.App {
+	t.Helper()
+	seedUserRow(t, db, userID, tier)
+
 	log := zap.NewNop()
 	app := fiber.New(fiber.Config{ErrorHandler: handler.ErrorHandler(log)})
 
@@ -156,7 +188,7 @@ func doRequest(t *testing.T, app *fiber.App, method, path string, body interface
 func TestRegisterConnection_HappyPath(t *testing.T) {
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
-	app := buildApp(db, "user-reg", "premium")
+	app := buildApp(t, db, "user-reg", "premium")
 
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
@@ -177,7 +209,7 @@ func TestRegisterConnection_HappyPath(t *testing.T) {
 
 func TestRegisterConnection_MissingServerID_ReturnsBadRequest(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-bad", "free")
+	app := buildApp(t, db, "user-bad", "free")
 
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{})
 
@@ -188,7 +220,7 @@ func TestRegisterConnection_MissingServerID_ReturnsBadRequest(t *testing.T) {
 
 func TestRegisterConnection_UnknownServer_ReturnsNotFound(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-nf", "premium")
+	app := buildApp(t, db, "user-nf", "premium")
 
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": "00000000-0000-0000-0000-000000000000",
@@ -204,7 +236,7 @@ func TestRegisterConnection_DeviceLimitEnforced_Returns429(t *testing.T) {
 	srv := seedActiveServer(t, db)
 
 	// Free tier allows only 1 device.
-	app := buildApp(db, "user-limit", "free")
+	app := buildApp(t, db, "user-limit", "free")
 
 	// First connection must succeed.
 	resp, _ := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
@@ -227,11 +259,11 @@ func TestRegisterConnection_PremiumTierAllowsMoreDevices(t *testing.T) {
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
 
-	// Premium tier allows 5 devices.
-	app := buildApp(db, "user-premium", "premium")
+	// Premium tier allows 3 devices (Phase A).
+	app := buildApp(t, db, "user-premium", "premium")
 
-	// Five connections must all succeed.
-	for i := 0; i < 5; i++ {
+	// Three connections must all succeed.
+	for i := 0; i < 3; i++ {
 		resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 			"server_id": srv.ID,
 		})
@@ -240,12 +272,12 @@ func TestRegisterConnection_PremiumTierAllowsMoreDevices(t *testing.T) {
 		}
 	}
 
-	// The sixth must be rejected.
+	// The fourth must be rejected.
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
 	})
 	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("expected 429 on 6th connection, got %d; body: %v", resp.StatusCode, body)
+		t.Errorf("expected 429 on 4th connection, got %d; body: %v", resp.StatusCode, body)
 	}
 }
 
@@ -255,7 +287,7 @@ func TestUnregisterConnection_HappyPath(t *testing.T) {
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
 	const userID = "user-unreg"
-	app := buildApp(db, userID, "premium")
+	app := buildApp(t, db, userID, "premium")
 
 	// Create a connection first.
 	createResp, createBody := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
@@ -278,7 +310,7 @@ func TestUnregisterConnection_HappyPath(t *testing.T) {
 
 func TestUnregisterConnection_NotFound_Returns404(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-nf2", "free")
+	app := buildApp(t, db, "user-nf2", "free")
 
 	resp, body := doRequest(t, app, http.MethodDelete, "/connections/00000000-0000-0000-0000-000000000000", nil)
 	if resp.StatusCode != http.StatusNotFound {
@@ -291,7 +323,7 @@ func TestUnregisterConnection_WrongOwner_ReturnsForbidden(t *testing.T) {
 	srv := seedActiveServer(t, db)
 
 	// Create a connection as user-A.
-	appA := buildApp(db, "user-A", "premium")
+	appA := buildApp(t, db, "user-A", "premium")
 	createResp, createBody := doRequest(t, appA, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
 	})
@@ -301,7 +333,7 @@ func TestUnregisterConnection_WrongOwner_ReturnsForbidden(t *testing.T) {
 	connID := createBody["data"].(map[string]interface{})["id"].(string)
 
 	// Attempt to delete it as user-B.
-	appB := buildApp(db, "user-B", "premium")
+	appB := buildApp(t, db, "user-B", "premium")
 	resp, body := doRequest(t, appB, http.MethodDelete, "/connections/"+connID, nil)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("expected 403, got %d; body: %v", resp.StatusCode, body)
@@ -312,7 +344,7 @@ func TestUnregisterConnection_AlreadyDisconnected_ReturnsNoContent(t *testing.T)
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
 	const userID = "user-idem"
-	app := buildApp(db, userID, "premium")
+	app := buildApp(t, db, userID, "premium")
 
 	createResp, createBody := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
@@ -339,7 +371,7 @@ func TestListActiveConnections_ReturnsOnlyUserConnections(t *testing.T) {
 	srv := seedActiveServer(t, db)
 
 	// User-A creates 2 connections.
-	appA := buildApp(db, "user-listA", "premium")
+	appA := buildApp(t, db, "user-listA", "premium")
 	for i := 0; i < 2; i++ {
 		doRequest(t, appA, http.MethodPost, "/connections", map[string]string{
 			"server_id": srv.ID,
@@ -347,7 +379,7 @@ func TestListActiveConnections_ReturnsOnlyUserConnections(t *testing.T) {
 	}
 
 	// User-B creates 1 connection.
-	appB := buildApp(db, "user-listB", "premium")
+	appB := buildApp(t, db, "user-listB", "premium")
 	doRequest(t, appB, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
 	})
@@ -369,7 +401,7 @@ func TestListActiveConnections_ReturnsOnlyUserConnections(t *testing.T) {
 
 func TestListActiveConnections_EmptyForNewUser(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-empty", "free")
+	app := buildApp(t, db, "user-empty", "free")
 
 	resp, body := doRequest(t, app, http.MethodGet, "/connections", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -389,7 +421,7 @@ func TestListActiveConnections_ExcludesDisconnected(t *testing.T) {
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
 	const userID = "user-disc-list"
-	app := buildApp(db, userID, "premium")
+	app := buildApp(t, db, userID, "premium")
 
 	// Create two connections.
 	var connID string
@@ -437,7 +469,7 @@ func TestRegisterConnection_InactiveServer_ReturnsNotFound(t *testing.T) {
 		t.Fatalf("failed to seed inactive server: %v", err)
 	}
 
-	app := buildApp(db, "user-inactive-srv", "premium")
+	app := buildApp(t, db, "user-inactive-srv", "premium")
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": srvID,
 	})
@@ -451,7 +483,7 @@ func TestRegisterConnection_InactiveServer_ReturnsNotFound(t *testing.T) {
 // gracefully when the connection ID in the URL is not a valid UUID.
 func TestUnregisterConnection_InvalidIDFormat_ReturnsNotFound(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-bad-id", "premium")
+	app := buildApp(t, db, "user-bad-id", "premium")
 
 	resp, _ := doRequest(t, app, http.MethodDelete, "/connections/not-a-valid-uuid", nil)
 	// The repo will do a WHERE id = 'not-a-valid-uuid' which returns no rows → 404.
@@ -464,7 +496,7 @@ func TestUnregisterConnection_InvalidIDFormat_ReturnsNotFound(t *testing.T) {
 // JSON body (not just missing server_id) is handled properly.
 func TestRegisterConnection_EmptyBody_ReturnsBadRequest(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-empty-body", "free")
+	app := buildApp(t, db, "user-empty-body", "free")
 
 	req := httptest.NewRequest(http.MethodPost, "/connections", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -481,7 +513,7 @@ func TestRegisterConnection_EmptyBody_ReturnsBadRequest(t *testing.T) {
 // does not panic on malformed JSON input.
 func TestRegisterConnection_InvalidJSON_ReturnsBadRequest(t *testing.T) {
 	db := newHandlerTestDB(t)
-	app := buildApp(db, "user-bad-json", "free")
+	app := buildApp(t, db, "user-bad-json", "free")
 
 	req := httptest.NewRequest(http.MethodPost, "/connections", bytes.NewBufferString("{bad json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -500,7 +532,7 @@ func TestUnregisterConnection_WithTrafficStats_PersistsByteCounts(t *testing.T) 
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
 	const userID = "user-traffic"
-	app := buildApp(db, userID, "premium")
+	app := buildApp(t, db, userID, "premium")
 
 	createResp, createBody := doRequest(t, app, http.MethodPost, "/connections", map[string]string{
 		"server_id": srv.ID,
@@ -524,7 +556,7 @@ func TestUnregisterConnection_WithTrafficStats_PersistsByteCounts(t *testing.T) 
 func TestRegisterConnection_FreeUserExactlyOneAllowed(t *testing.T) {
 	db := newHandlerTestDB(t)
 	srv := seedActiveServer(t, db)
-	app := buildApp(db, "user-free-exact", "free")
+	app := buildApp(t, db, "user-free-exact", "free")
 
 	// Exactly 1 device allowed.
 	resp, body := doRequest(t, app, http.MethodPost, "/connections", map[string]string{

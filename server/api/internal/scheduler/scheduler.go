@@ -3,12 +3,13 @@ package scheduler
 
 import (
 	"sync"
+	"time"
 
+	"vpnapp/server/api/internal/config"
 	"vpnapp/server/api/internal/repository"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"time"
 )
 
 const cleanupInterval = 1 * time.Minute
@@ -27,7 +28,7 @@ var mu sync.Mutex
 // Start launches the background goroutine that cleans up expired sessions
 // once per cleanupInterval. Calling Start more than once is safe — subsequent
 // calls are no-ops if a scheduler is already running.
-func Start(db *gorm.DB, logger *zap.Logger) {
+func Start(db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -45,12 +46,12 @@ func Start(db *gorm.DB, logger *zap.Logger) {
 		defer s.wg.Done()
 
 		// Run once immediately so the first cleanup does not wait a full interval.
-		runCleanup(db, logger)
+		runCleanup(db, logger, cfg)
 
 		for {
 			select {
 			case <-s.ticker.C:
-				runCleanup(db, logger)
+				runCleanup(db, logger, cfg)
 			case <-s.done:
 				return
 			}
@@ -79,7 +80,7 @@ func Stop() {
 }
 
 // runCleanup deletes expired sessions and stale connections, and logs results.
-func runCleanup(db *gorm.DB, logger *zap.Logger) {
+func runCleanup(db *gorm.DB, logger *zap.Logger, cfg *config.Config) {
 	// Clean expired sessions
 	count, err := repository.DeleteExpiredSessions(db)
 	if err != nil {
@@ -96,8 +97,8 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 		logger.Info("stale reservations cleaned up", zap.Int64("count", reservationCount))
 	}
 
-	// Clean stale connections (no heartbeat for >3 min)
-	staleCount, err := repository.CleanupStaleConnections(db, 3*time.Minute)
+	// Clean stale connections (no heartbeat for cfg.StaleConnectionAfter)
+	staleCount, err := repository.CleanupStaleConnections(db, cfg.StaleConnectionAfter)
 	if err != nil {
 		logger.Error("stale connection cleanup failed", zap.Error(err))
 	} else if staleCount > 0 {
@@ -105,8 +106,8 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 	}
 
 	// Delete expired share/link codes so the table does not grow unbounded.
-	// Each code is short-lived (5 min) and one-time-use anyway, so this only
-	// catches codes that were generated but never redeemed.
+	// Each code is short-lived (cfg.LinkCodeTTL) and one-time-use anyway, so
+	// this only catches codes that were generated but never redeemed.
 	codeCount, err := repository.DeleteExpiredLinkCodes(db)
 	if err != nil {
 		logger.Error("expired link code cleanup failed", zap.Error(err))
@@ -114,11 +115,11 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 		logger.Info("expired link codes cleaned up", zap.Int64("count", codeCount))
 	}
 
-	// Free quota slots occupied by devices that have not been seen for 30+ days.
-	// This is the safety net for the iOS reinstall edge case (and for any
-	// device the user has stopped using). Owners can also remove devices
-	// manually via DELETE /devices/:id.
-	deviceCount, err := repository.DeleteStaleDevices(db, time.Now().Add(-30*24*time.Hour))
+	// Free quota slots occupied by devices that have not been seen for the
+	// configured stale-device window. This is the safety net for the iOS
+	// reinstall edge case (and for any device the user has stopped using).
+	// Owners can also remove devices manually via DELETE /devices/:id.
+	deviceCount, err := repository.DeleteStaleDevices(db, time.Now().Add(-cfg.StaleDeviceAfter))
 	if err != nil {
 		logger.Error("stale device cleanup failed", zap.Error(err))
 	} else if deviceCount > 0 {

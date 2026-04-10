@@ -53,7 +53,7 @@ func main() {
 	logger.Info("connected to redis")
 
 	// Start background session cleanup scheduler.
-	scheduler.Start(db, logger)
+	scheduler.Start(db, logger, cfg)
 
 	// Create Fiber app
 	app := fiber.New(fiber.Config{
@@ -70,15 +70,14 @@ func main() {
 	}))
 
 	// App version gate — rejects mobile clients below MIN_APP_VERSION.
-	// Bypasses monitoring (/health), Stripe callbacks (/webhook/stripe),
-	// and admin login (/auth/admin-login, which is called from curl or the
-	// web admin panel — neither of which ships an X-App-Version header).
+	// Bypasses are scoped to (method, path) so that for example
+	// POST /health is still gated even though GET /health is not.
 	app.Use(middleware.AppVersion(
 		cfg.MinAppVersion,
 		logger,
-		"/api/v1/health",
-		"/api/v1/webhook/stripe",
-		"/api/v1/auth/admin-login",
+		middleware.SkipRule{Method: fiber.MethodGet, Path: "/api/v1/health"},
+		middleware.SkipRule{Method: fiber.MethodPost, Path: "/api/v1/webhook/stripe"},
+		middleware.SkipRule{Method: fiber.MethodPost, Path: "/api/v1/auth/admin-login"},
 	))
 
 	// Redis-backed per-user rate limiting. Decodes the JWT (when present) to
@@ -94,18 +93,35 @@ func main() {
 	api.Post("/auth/admin-login", handler.AdminLogin(logger, cfg, db))
 	// /auth/link is intentionally public — the calling device is a brand-new
 	// guest that does not yet hold a token for the target account it wants
-	// to attach to via the share code.
-	api.Post("/auth/link", handler.LinkDevice(logger, cfg, db))
+	// to attach to via the share code. The dedicated rate limiter caps
+	// brute-force attempts at 10/minute/IP independently of the global
+	// 30/minute/IP bucket so the link endpoint cannot be amortised over
+	// other public endpoints.
+	api.Post("/auth/link",
+		middleware.LinkAttemptLimit(redisClient, logger),
+		handler.LinkDevice(logger, cfg, db),
+	)
 	api.Get("/health", handler.Health())
 
 	// Stripe webhook — public route, authenticated via Stripe-Signature header.
 	api.Post("/webhook/stripe", handler.HandleStripeWebhook(logger, cfg, db))
 
-	// Debug endpoint — logs client-side errors for diagnosis
+	// Debug endpoint — logs only the "error" and "action" fields from
+	// client-side error reports. The body is intentionally NOT logged in
+	// full because clients can include sensitive material (device_id,
+	// device_secret, tokens) and the request body would otherwise leak
+	// into log aggregation. Anything else needed for diagnosis should be
+	// added as an explicit field on the client side.
 	api.Post("/debug/error", func(c *fiber.Ctx) error {
-		var body map[string]interface{}
+		var body struct {
+			Error  string `json:"error"`
+			Action string `json:"action"`
+		}
 		if err := c.BodyParser(&body); err == nil {
-			logger.Warn("CLIENT ERROR REPORT", zap.Any("body", body))
+			logger.Warn("CLIENT ERROR REPORT",
+				zap.String("error", body.Error),
+				zap.String("action", body.Action),
+			)
 		}
 		return c.SendStatus(fiber.StatusNoContent)
 	})
@@ -125,7 +141,7 @@ func main() {
 	protected.Post("/subscription/checkout", handler.CreateCheckoutSession(logger, cfg, db))
 	protected.Post("/subscription/cancel", handler.CancelSubscription(logger, cfg, db))
 	// Plan sharing — owner generates a code, friend's device redeems it via /auth/link.
-	protected.Post("/devices/share-code", handler.CreateShareCode(logger, db))
+	protected.Post("/devices/share-code", handler.CreateShareCode(logger, cfg, db))
 	protected.Get("/devices", handler.ListMyDevices(logger, db))
 	protected.Delete("/devices/:id", handler.DeleteMyDevice(logger, db))
 
