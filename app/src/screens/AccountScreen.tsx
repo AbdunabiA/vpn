@@ -9,12 +9,14 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Share,
 } from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useAuthStore} from '../stores/authStore';
 import {useLayout} from '../hooks/useLayout';
+import api from '../services/api';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {RootStackParamList} from '../navigation/RootNavigator';
 
@@ -57,7 +59,8 @@ function planDisplayName(tier: string, t: (key: string) => string): string {
 export function AccountScreen() {
   const {t} = useTranslation();
   const navigation = useNavigation<NavigationProp>();
-  const {user, isAuthenticated, fetchAccount, updateProfile} = useAuthStore();
+  const {user, isAuthenticated, fetchAccount, updateProfile, linkWithCode, isLoading} =
+    useAuthStore();
   const {tabletContentStyle, scale} = useLayout();
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -66,18 +69,25 @@ export function AccountScreen() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [activeDevices, setActiveDevices] = useState<number | null>(null);
 
+  // Plan sharing UI state
+  const [shareCode, setShareCode] = useState<string | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [linkCodeInput, setLinkCodeInput] = useState('');
+  const [linkMode, setLinkMode] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
   // Fetch account info and active connections on mount
   useEffect(() => {
     if (isAuthenticated) {
       fetchAccount();
       fetchActiveDevices();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   async function fetchActiveDevices() {
     try {
-      const api = (await import('../services/api')).default;
       const {data} = await api.get<{data: unknown[]}>('/connections');
       setActiveDevices(data.data.length);
     } catch {
@@ -115,22 +125,73 @@ export function AccountScreen() {
   }
 
   function handleLogout() {
-    Alert.alert(
-      t('account.logout'),
-      '',
-      [
-        {text: t('common.cancel'), style: 'cancel'},
-        {
-          text: t('account.logout'),
-          style: 'destructive',
-          onPress: () => useAuthStore.getState().logout(),
-        },
-      ],
-    );
+    Alert.alert(t('account.logout'), '', [
+      {text: t('common.cancel'), style: 'cancel'},
+      {
+        text: t('account.logout'),
+        style: 'destructive',
+        onPress: () => useAuthStore.getState().logout(),
+      },
+    ]);
+  }
+
+  // ---- Plan sharing handlers ----
+
+  async function handleGenerateShareCode() {
+    setShareLoading(true);
+    setShareError(null);
+    try {
+      const {data} = await api.post<{data: {code: string; expires_in_sec: number}}>(
+        '/devices/share-code',
+      );
+      setShareCode(data.data.code);
+    } catch (err: unknown) {
+      const anyErr = err as {response?: {data?: {error?: string}}};
+      setShareError(anyErr?.response?.data?.error || t('share.errorGeneric'));
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function handleShareCodeViaSystem() {
+    if (!shareCode) return;
+    try {
+      await Share.share({
+        message: t('share.shareMessage', {code: shareCode}),
+      });
+    } catch {
+      // User dismissed share sheet — no-op.
+    }
+  }
+
+  async function handleSubmitLinkCode() {
+    const trimmed = linkCodeInput.trim();
+    if (trimmed.length !== 6 || !/^\d{6}$/.test(trimmed)) {
+      setLinkError(t('share.codeFormatError'));
+      return;
+    }
+    setLinkError(null);
+    try {
+      await linkWithCode(trimmed);
+      setLinkMode(false);
+      setLinkCodeInput('');
+      Alert.alert(t('share.linkSuccessTitle'), t('share.linkSuccessBody'));
+    } catch (err: unknown) {
+      const anyErr = err as {response?: {data?: {error?: string}}};
+      setLinkError(anyErr?.response?.data?.error || t('share.linkErrorGeneric'));
+    }
   }
 
   if (!isAuthenticated) {
-    return <LoginView />;
+    // Guest auth runs automatically on app start; this branch is only hit
+    // briefly during initialization or after a manual logout.
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
   }
 
   const displayName = user?.full_name || '?';
@@ -142,10 +203,13 @@ export function AccountScreen() {
       <ScrollView
         contentContainerStyle={[styles.content, tabletContentStyle]}
         showsVerticalScrollIndicator={false}>
-
         {/* Avatar + Name header */}
         <View style={styles.headerCard}>
-          <View style={[styles.avatarCircle, {width: 72 * scale, height: 72 * scale, borderRadius: 36 * scale}]}>
+          <View
+            style={[
+              styles.avatarCircle,
+              {width: 72 * scale, height: 72 * scale, borderRadius: 36 * scale},
+            ]}>
             <Text style={styles.avatarText}>{getInitials(displayName)}</Text>
           </View>
 
@@ -161,9 +225,7 @@ export function AccountScreen() {
                 maxLength={255}
                 editable={!nameSaving}
               />
-              {nameError && (
-                <Text style={styles.fieldError}>{nameError}</Text>
-              )}
+              {nameError && <Text style={styles.fieldError}>{nameError}</Text>}
               <View style={styles.nameEditActions}>
                 <TouchableOpacity
                   style={styles.cancelNameButton}
@@ -195,16 +257,6 @@ export function AccountScreen() {
           )}
         </View>
 
-        {/* Email status card */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>{t('account.email')}</Text>
-          <View style={styles.cardRow}>
-            <View style={styles.verifiedBadge}>
-              <Text style={styles.verifiedText}>{t('account.emailVerified')}</Text>
-            </View>
-          </View>
-        </View>
-
         {/* Subscription card */}
         <View style={styles.card}>
           <Text style={styles.cardLabel}>{t('account.subscription')}</Text>
@@ -220,6 +272,98 @@ export function AccountScreen() {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Plan sharing — only meaningful for paid tiers */}
+        {tier !== 'free' && (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>{t('share.shareTitle')}</Text>
+            <Text style={styles.cardSubtle}>{t('share.shareSubtitle')}</Text>
+
+            {shareCode ? (
+              <View style={styles.codeBox}>
+                <Text style={styles.codeValue}>{shareCode}</Text>
+                <Text style={styles.codeHint}>{t('share.expiresHint')}</Text>
+                <View style={styles.codeActionsRow}>
+                  <TouchableOpacity
+                    style={styles.codeActionBtn}
+                    onPress={handleShareCodeViaSystem}>
+                    <Text style={styles.codeActionText}>{t('share.shareButton')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.codeActionBtn, styles.codeActionBtnSecondary]}
+                    onPress={() => setShareCode(null)}>
+                    <Text style={styles.codeActionTextSecondary}>{t('common.cancel')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.upgradeButton}
+                onPress={handleGenerateShareCode}
+                disabled={shareLoading}>
+                {shareLoading ? (
+                  <ActivityIndicator color={colors.textPrimary} />
+                ) : (
+                  <Text style={styles.upgradeText}>{t('share.generateButton')}</Text>
+                )}
+              </TouchableOpacity>
+            )}
+            {shareError && <Text style={styles.fieldError}>{shareError}</Text>}
+          </View>
+        )}
+
+        {/* Link to existing plan — useful for free users who got a code from a friend */}
+        {tier === 'free' && (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>{t('share.linkTitle')}</Text>
+            <Text style={styles.cardSubtle}>{t('share.linkSubtitle')}</Text>
+
+            {linkMode ? (
+              <View style={styles.linkInputBox}>
+                <TextInput
+                  style={styles.codeInput}
+                  value={linkCodeInput}
+                  onChangeText={setLinkCodeInput}
+                  placeholder="000000"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  autoFocus
+                  editable={!isLoading}
+                />
+                {linkError && <Text style={styles.fieldError}>{linkError}</Text>}
+                <View style={styles.codeActionsRow}>
+                  <TouchableOpacity
+                    style={[styles.codeActionBtn, styles.codeActionBtnSecondary]}
+                    onPress={() => {
+                      setLinkMode(false);
+                      setLinkCodeInput('');
+                      setLinkError(null);
+                    }}
+                    disabled={isLoading}>
+                    <Text style={styles.codeActionTextSecondary}>{t('common.cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.codeActionBtn}
+                    onPress={handleSubmitLinkCode}
+                    disabled={isLoading}>
+                    {isLoading ? (
+                      <ActivityIndicator color={colors.textPrimary} />
+                    ) : (
+                      <Text style={styles.codeActionText}>{t('share.linkButton')}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.upgradeButton}
+                onPress={() => setLinkMode(true)}>
+                <Text style={styles.upgradeText}>{t('share.openLinkButton')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         {/* Stats row */}
         <View style={styles.statsRow}>
@@ -247,118 +391,6 @@ export function AccountScreen() {
   );
 }
 
-// ---- LoginView ----
-
-function LoginView() {
-  const {t} = useTranslation();
-  const {tabletContentStyle} = useLayout();
-  const {login, register, isLoading} = useAuthStore();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
-
-  const handleSubmit = async () => {
-    if (!email || !password) {
-      setError('Email and password are required');
-      return;
-    }
-    if (isRegisterMode && name.trim().length < 2) {
-      setError(t('register.nameRequired'));
-      return;
-    }
-    if (isRegisterMode && password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
-
-    try {
-      setError(null);
-      if (isRegisterMode) {
-        await register(email, password, name.trim());
-      } else {
-        await login(email, password);
-      }
-    } catch (err: unknown) {
-      const anyErr = err as {response?: {data?: {error?: string}}};
-      const message =
-        anyErr?.response?.data?.error || 'Something went wrong. Please try again.';
-      setError(message);
-    }
-  };
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={[styles.loginContent, tabletContentStyle]}>
-        <Text style={styles.loginTitle}>
-          {isRegisterMode ? t('account.register') : t('account.login')}
-        </Text>
-
-        {error && <Text style={styles.errorText}>{error}</Text>}
-
-        {isRegisterMode && (
-          <TextInput
-            style={styles.input}
-            placeholder={t('register.namePlaceholder')}
-            placeholderTextColor={colors.textMuted}
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="words"
-            editable={!isLoading}
-          />
-        )}
-
-        <TextInput
-          style={styles.input}
-          placeholder={t('account.email')}
-          placeholderTextColor={colors.textMuted}
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          editable={!isLoading}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder={t('account.password')}
-          placeholderTextColor={colors.textMuted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!isLoading}
-        />
-
-        <TouchableOpacity
-          style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
-          onPress={handleSubmit}
-          disabled={isLoading}>
-          {isLoading ? (
-            <ActivityIndicator color={colors.textPrimary} />
-          ) : (
-            <Text style={styles.loginButtonText}>
-              {isRegisterMode ? t('account.register') : t('account.login')}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.registerLink}
-          onPress={() => {
-            setIsRegisterMode(!isRegisterMode);
-            setError(null);
-            setName('');
-          }}>
-          <Text style={styles.registerText}>
-            {isRegisterMode ? t('account.login') : t('account.register')}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -367,6 +399,11 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.md,
     paddingBottom: spacing.xxl,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Header / avatar card
@@ -477,26 +514,17 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: spacing.xs,
   },
+  cardSubtle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
   cardValue: {
     ...typography.h3,
     color: colors.textPrimary,
   },
-  cardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  verifiedBadge: {
-    backgroundColor: colors.successDark,
-    borderRadius: borderRadius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-  },
-  verifiedText: {
-    ...typography.captionBold,
-    color: colors.textPrimary,
-  },
 
-  // Upgrade button inside subscription card
+  // Upgrade button inside subscription card (also re-used for share/link primary actions)
   upgradeButton: {
     backgroundColor: colors.primary,
     borderRadius: borderRadius.sm,
@@ -508,6 +536,67 @@ const styles = StyleSheet.create({
   upgradeText: {
     ...typography.bodyBold,
     color: colors.textPrimary,
+  },
+
+  // Share code display
+  codeBox: {
+    marginTop: spacing.md,
+    alignItems: 'center',
+  },
+  codeValue: {
+    ...typography.h1,
+    color: colors.textPrimary,
+    letterSpacing: 8,
+    fontFamily: 'monospace',
+  },
+  codeHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  codeActionsRow: {
+    flexDirection: 'row',
+    marginTop: spacing.md,
+    gap: spacing.sm,
+    width: '100%',
+  },
+  codeActionBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.sm,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  codeActionBtnSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  codeActionText: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+  },
+  codeActionTextSecondary: {
+    ...typography.bodyBold,
+    color: colors.textSecondary,
+  },
+
+  // Link code input
+  linkInputBox: {
+    marginTop: spacing.md,
+    alignItems: 'stretch',
+  },
+  codeInput: {
+    backgroundColor: colors.surfaceLight,
+    borderRadius: borderRadius.sm,
+    padding: spacing.md,
+    color: colors.textPrimary,
+    ...typography.h2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    textAlign: 'center',
+    letterSpacing: 6,
+    fontFamily: 'monospace',
   },
 
   // Stats row
@@ -550,56 +639,5 @@ const styles = StyleSheet.create({
   logoutText: {
     ...typography.bodyBold,
     color: colors.error,
-  },
-
-  // ---- LoginView styles ----
-  loginContent: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  loginTitle: {
-    ...typography.h1,
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginBottom: spacing.xl,
-  },
-  errorText: {
-    ...typography.caption,
-    color: colors.error,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.sm,
-    padding: spacing.md,
-    color: colors.textPrimary,
-    ...typography.body,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  loginButton: {
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.sm,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-  },
-  loginButtonDisabled: {
-    opacity: 0.7,
-  },
-  loginButtonText: {
-    ...typography.bodyBold,
-    color: colors.textPrimary,
-  },
-  registerLink: {
-    marginTop: spacing.lg,
-    alignItems: 'center',
-  },
-  registerText: {
-    ...typography.body,
-    color: colors.primary,
   },
 });

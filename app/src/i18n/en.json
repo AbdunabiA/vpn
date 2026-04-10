@@ -97,6 +97,23 @@
       }
     }
   },
+  "share": {
+    "shareTitle": "Share your plan",
+    "shareSubtitle": "Generate a one-time code to add a friend's device to this plan.",
+    "generateButton": "Generate share code",
+    "shareButton": "Send via…",
+    "expiresHint": "Code expires in 5 minutes",
+    "shareMessage": "Use this code to link your VPN app to my plan: {{code}}",
+    "errorGeneric": "Could not generate code. Please try again.",
+    "linkTitle": "Have a code from a friend?",
+    "linkSubtitle": "Enter the 6-digit code to link this device to an existing paid plan.",
+    "openLinkButton": "Enter code",
+    "linkButton": "Link plan",
+    "codeFormatError": "Code must be 6 digits",
+    "linkErrorGeneric": "Could not link. Check the code and try again.",
+    "linkSuccessTitle": "Linked",
+    "linkSuccessBody": "This device is now using the shared plan."
+  },
   "splitTunnel": {
     "title": "Split Tunneling",
     "description": "Choose which apps (Android) or domains (iOS) bypass the VPN and use your regular connection.",
