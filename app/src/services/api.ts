@@ -1,5 +1,6 @@
 import axios from 'axios';
 import {useAuthStore} from '../stores/authStore';
+import {APP_VERSION} from '../config/version';
 
 // Base API URL — points to the Go Fiber backend behind Cloudflare.
 // In development (__DEV__) connects to the local machine; in production uses the live API.
@@ -12,6 +13,9 @@ const api = axios.create({
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
+    // Server-side version gate — requests without this header (or below the
+    // server's MIN_APP_VERSION) are rejected with 426 Upgrade Required.
+    'X-App-Version': APP_VERSION,
   },
 });
 

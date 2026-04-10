@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -13,11 +13,16 @@ import {
 import {useTranslation} from 'react-i18next';
 import {useSubscription} from '../hooks/useSubscription';
 import {useLayout} from '../hooks/useLayout';
-import {createCheckoutSession} from '../services/payment';
+import {useAuthStore} from '../stores/authStore';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {Subscription} from '../types/api';
 
 type Plan = 'free' | 'premium' | 'ultimate';
+
+// Telegram handle that receives premium requests. When Stripe is wired up
+// we'll replace this flow with in-app checkout; for now users contact support
+// manually and an admin activates their subscription through the admin panel.
+const SUPPORT_TELEGRAM = 'flawlssr';
 
 interface PlanConfig {
   id: Plan;
@@ -42,7 +47,7 @@ const PLANS: PlanConfig[] = [
   },
   {
     id: 'premium',
-    price: '$9.99',
+    price: '$4.99',
     period: '/mo',
     features: [
       '5 devices',
@@ -50,12 +55,13 @@ const PLANS: PlanConfig[] = [
       '40+ server locations',
       'High speed',
       'Kill switch',
+      'No ads',
     ],
     highlighted: true,
   },
   {
     id: 'ultimate',
-    price: '$19.99',
+    price: '$9.99',
     period: '/mo',
     features: [
       '10 devices',
@@ -63,7 +69,7 @@ const PLANS: PlanConfig[] = [
       '80+ server locations',
       'Maximum speed',
       'Kill switch',
-      'Dedicated IP',
+      'No ads',
       'Priority support',
     ],
     highlighted: false,
@@ -73,11 +79,10 @@ const PLANS: PlanConfig[] = [
 interface PlanCardProps {
   plan: PlanConfig;
   isCurrent: boolean;
-  isUpgrading: boolean;
   onUpgrade: (plan: Plan) => void;
 }
 
-function PlanCard({plan, isCurrent, isUpgrading, onUpgrade}: PlanCardProps) {
+function PlanCard({plan, isCurrent, onUpgrade}: PlanCardProps) {
   const {t} = useTranslation();
 
   return (
@@ -121,15 +126,10 @@ function PlanCard({plan, isCurrent, isUpgrading, onUpgrade}: PlanCardProps) {
         <TouchableOpacity
           style={[styles.upgradeButton, plan.highlighted && styles.upgradeButtonHighlighted]}
           onPress={() => onUpgrade(plan.id)}
-          disabled={isUpgrading}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel={t('payment.upgrade', {plan: plan.id})}>
-          {isUpgrading ? (
-            <ActivityIndicator color={colors.textPrimary} />
-          ) : (
-            <Text style={styles.upgradeButtonText}>{t('payment.upgrade')}</Text>
-          )}
+          accessibilityLabel={t('payment.contactSupport')}>
+          <Text style={styles.upgradeButtonText}>{t('payment.contactSupport')}</Text>
         </TouchableOpacity>
       ) : null}
     </View>
@@ -140,23 +140,28 @@ export function PaymentScreen() {
   const {t} = useTranslation();
   const {tabletContentStyle} = useLayout();
   const {data: subscription, isLoading} = useSubscription();
-  const [upgradingPlan, setUpgradingPlan] = useState<Plan | null>(null);
+  const user = useAuthStore(s => s.user);
 
   const currentPlan = (subscription as Subscription | undefined)?.plan ?? 'free';
+  const userId = user?.id ?? '';
+  const shortId = userId.substring(0, 8);
 
-  const handleUpgrade = async (plan: Plan) => {
-    setUpgradingPlan(plan);
+  const openTelegram = async (plan: Plan) => {
+    if (!userId) {
+      Alert.alert(t('common.error'), t('payment.idMissing'));
+      return;
+    }
+    const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
+    const message = t('payment.telegramMessage', {plan: planName, id: userId});
+    const encoded = encodeURIComponent(message);
+    const url = `https://t.me/${SUPPORT_TELEGRAM}?text=${encoded}`;
     try {
-      const session = await createCheckoutSession(plan);
-      await Linking.openURL(session.url);
+      await Linking.openURL(url);
     } catch {
       Alert.alert(
         t('payment.errorTitle'),
-        t('payment.errorMessage'),
-        [{text: t('common.retry'), style: 'default'}],
+        t('payment.telegramError', {handle: `@${SUPPORT_TELEGRAM}`}),
       );
-    } finally {
-      setUpgradingPlan(null);
     }
   };
 
@@ -165,6 +170,16 @@ export function PaymentScreen() {
       <ScrollView contentContainerStyle={[styles.content, tabletContentStyle]} showsVerticalScrollIndicator={false}>
         <Text style={styles.screenTitle}>{t('payment.title')}</Text>
         <Text style={styles.screenSubtitle}>{t('payment.subtitle')}</Text>
+
+        {/* User ID card — visible so users see their identifier before contacting
+            support. The full ID is also injected into the Telegram prefilled message,
+            so users don't need to type it manually. */}
+        {userId ? (
+          <View style={styles.idCard}>
+            <Text style={styles.idLabel}>{t('payment.yourId')}</Text>
+            <Text style={styles.idValue}>{shortId}…</Text>
+          </View>
+        ) : null}
 
         {isLoading ? (
           <View style={styles.loadingContainer}>
@@ -176,11 +191,15 @@ export function PaymentScreen() {
               key={plan.id}
               plan={plan}
               isCurrent={currentPlan === plan.id}
-              isUpgrading={upgradingPlan === plan.id}
-              onUpgrade={handleUpgrade}
+              onUpgrade={openTelegram}
             />
           ))
         )}
+
+        <View style={styles.supportCard}>
+          <Text style={styles.supportTitle}>{t('payment.howItWorksTitle')}</Text>
+          <Text style={styles.supportText}>{t('payment.howItWorksBody')}</Text>
+        </View>
 
         <Text style={styles.disclaimer}>{t('payment.disclaimer')}</Text>
       </ScrollView>
@@ -208,7 +227,28 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  idCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    alignItems: 'center',
+  },
+  idLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: 2,
+  },
+  idValue: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+    fontFamily: 'monospace',
+    letterSpacing: 1,
   },
   loadingContainer: {
     paddingVertical: spacing.xxl,
@@ -305,6 +345,25 @@ const styles = StyleSheet.create({
   currentBadgeText: {
     ...typography.bodyBold,
     color: colors.success,
+  },
+  supportCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  supportTitle: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  supportText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
   disclaimer: {
     ...typography.caption,

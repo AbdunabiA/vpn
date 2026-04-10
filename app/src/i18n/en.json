@@ -75,12 +75,16 @@
     "mostPopular": "Most Popular",
     "currentPlan": "Current Plan",
     "upgrade": "Upgrade",
-    "cancel": "Cancel Subscription",
-    "cancelConfirmTitle": "Cancel Subscription",
-    "cancelConfirmMessage": "Your plan will remain active until the end of the billing period.",
+    "contactSupport": "Contact Support",
+    "yourId": "Your ID",
+    "idMissing": "User ID not available. Please restart the app.",
+    "telegramMessage": "Hi! I want to upgrade to {{plan}}.\nMy ID: {{id}}",
+    "telegramError": "Could not open Telegram. Please message {{handle}} manually.",
+    "howItWorksTitle": "How to activate",
+    "howItWorksBody": "1. Tap \"Contact Support\" on the plan you want.\n2. Telegram will open with a pre-filled message containing your ID.\n3. Send the message and complete the payment as instructed.\n4. Your plan will be activated within a few hours.",
     "errorTitle": "Payment Error",
     "errorMessage": "Unable to start checkout. Please try again.",
-    "disclaimer": "Billed monthly. Cancel any time.",
+    "disclaimer": "Manual activation. Contact support to purchase.",
     "plans": {
       "free": {
         "name": "Free"
