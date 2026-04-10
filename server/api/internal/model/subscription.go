@@ -21,12 +21,17 @@ type Subscription struct {
 
 // PlanLimits maps subscription tier names to their resource limits.
 // Use UnlimitedServers / UnlimitedDevices (-1) for plans without a cap.
+//
+// Device counts intentionally tighten upgrade incentives:
+//   - free: 1 device — single phone, encourages upgrade for tablets/laptops.
+//   - premium: 3 devices — fits a couple sharing the plan.
+//   - ultimate: 6 devices — small family plan ceiling.
 var PlanLimits = map[string]struct {
 	MaxDevices     int
 	MaxServers     int // UnlimitedServers (-1) = no cap
 	SpeedLimitMbps int // 0 = unlimited
 }{
-	"free":     {MaxDevices: 5, MaxServers: 3, SpeedLimitMbps: 50},
-	"premium":  {MaxDevices: 5, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
-	"ultimate": {MaxDevices: 10, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
+	"free":     {MaxDevices: 1, MaxServers: 3, SpeedLimitMbps: 50},
+	"premium":  {MaxDevices: 3, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
+	"ultimate": {MaxDevices: 6, MaxServers: UnlimitedServers, SpeedLimitMbps: 0},
 }

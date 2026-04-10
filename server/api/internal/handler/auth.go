@@ -169,12 +169,67 @@ func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Han
 	}
 }
 
+// guestLoginRequest is the body sent by the mobile app on /auth/guest.
+// All fields are optional; older clients that omit device_id will still
+// get a fresh anonymous account on every call (legacy behaviour).
+type guestLoginRequest struct {
+	DeviceID string `json:"device_id"`
+	Platform string `json:"platform"`
+	Model    string `json:"model"`
+}
+
 // GuestLogin handles POST /auth/guest.
-// Creates an anonymous account with a random name, no email or password, and
-// returns JWT tokens so the app can operate without requiring registration.
+//
+// If the request includes a device_id and that device has authenticated
+// before, the existing user_id is returned (and the device row is touched).
+// This makes guest sessions stable across app reinstalls and across the
+// "share code" link flow — the same physical device always maps to the
+// same account.
+//
+// Without a device_id, the legacy behaviour is preserved: a fresh
+// anonymous user_id is minted on every call.
 func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Generate a short random suffix from a UUID for the display name
+		var req guestLoginRequest
+		_ = c.BodyParser(&req) // body is optional
+
+		// Fast path: known device — reuse the bound user, no DB churn beyond
+		// a touch.
+		if req.DeviceID != "" {
+			if device, err := repository.FindDeviceByDeviceID(db, req.DeviceID); err == nil {
+				_ = repository.TouchDevice(db, device.ID)
+				user, err := repository.FindUserByID(db, device.UserID)
+				if err != nil {
+					logger.Error("guest login: device user missing",
+						zap.String("device_id", req.DeviceID),
+						zap.String("user_id", device.UserID),
+						zap.Error(err),
+					)
+					// Fall through to fresh-user path so the user is not locked out.
+				} else {
+					tokens, err := generateTokens(user.ID, user.SubscriptionTier, user.Role, user.FullName, cfg.JWTSecret)
+					if err != nil {
+						logger.Error("guest login: failed to generate tokens for known device", zap.Error(err))
+						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+							"error": "internal server error",
+						})
+					}
+					_ = storeRefreshSession(db, user.ID, tokens.RefreshToken)
+					logger.Info("guest login: returning known device",
+						zap.String("user_id", user.ID),
+						zap.String("device_id", req.DeviceID),
+					)
+					return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": tokens})
+				}
+			} else if !errors.Is(err, repository.ErrNotFound) {
+				logger.Error("guest login: device lookup failed", zap.Error(err))
+				// Fall through to fresh-user path.
+			}
+		}
+
+		// Slow path: brand-new device (or device_id not provided). Mint a
+		// fresh anonymous user, free subscription, and (when device_id is
+		// present) bind it to the new user.
 		suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:8]
 		guestName := "guest_" + suffix
 
@@ -210,6 +265,25 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 			})
 		}
 
+		// Bind device to the freshly-created user.
+		if req.DeviceID != "" {
+			device := model.Device{
+				UserID:   user.ID,
+				DeviceID: req.DeviceID,
+				Platform: req.Platform,
+				Model:    req.Model,
+			}
+			if err := repository.CreateDevice(db, &device); err != nil {
+				// Non-fatal: if a race created the device row in parallel, the
+				// next call to /auth/guest will hit the fast path. Just log.
+				logger.Warn("guest login: device bind failed",
+					zap.String("user_id", user.ID),
+					zap.String("device_id", req.DeviceID),
+					zap.Error(err),
+				)
+			}
+		}
+
 		tokens, err := generateTokens(user.ID, "free", "user", user.FullName, cfg.JWTSecret)
 		if err != nil {
 			logger.Error("failed to generate guest tokens", zap.Error(err))
@@ -222,7 +296,11 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 			logger.Error("failed to store guest session", zap.Error(err))
 		}
 
-		logger.Info("guest user created", zap.String("user_id", user.ID), zap.String("name", guestName))
+		logger.Info("guest user created",
+			zap.String("user_id", user.ID),
+			zap.String("name", guestName),
+			zap.String("device_id", req.DeviceID),
+		)
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"data": tokens,
@@ -241,13 +319,16 @@ func storeRefreshSession(db *gorm.DB, userID, refreshToken string) error {
 	return repository.CreateSession(db, &session)
 }
 
-// generateTokens creates a JWT access token (15 min) and refresh token (30 days).
+// generateTokens creates a JWT access token (5 min) and refresh token (30 days).
 // The role claim is embedded in the access token for admin middleware checks.
 // The name claim carries the user's display name so the app can show it without
 // a separate /account call immediately after login/register.
+//
+// Access token TTL is intentionally short so admin role changes take effect
+// quickly. The connection handler reads tier directly from the DB anyway.
 func generateTokens(userID, tier, role, name, secret string) (*authResponse, error) {
 	now := time.Now()
-	accessExpiry := now.Add(15 * time.Minute)
+	accessExpiry := now.Add(5 * time.Minute)
 
 	accessClaims := jwt.MapClaims{
 		"sub":  userID,

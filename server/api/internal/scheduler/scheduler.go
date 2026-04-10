@@ -103,4 +103,14 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 	} else if staleCount > 0 {
 		logger.Info("stale connections cleaned up", zap.Int64("count", staleCount))
 	}
+
+	// Delete expired share/link codes so the table does not grow unbounded.
+	// Each code is short-lived (5 min) and one-time-use anyway, so this only
+	// catches codes that were generated but never redeemed.
+	codeCount, err := repository.DeleteExpiredLinkCodes(db)
+	if err != nil {
+		logger.Error("expired link code cleanup failed", zap.Error(err))
+	} else if codeCount > 0 {
+		logger.Info("expired link codes cleaned up", zap.Int64("count", codeCount))
+	}
 }

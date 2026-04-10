@@ -26,7 +26,26 @@ type disconnectConnectionRequest struct {
 func RegisterConnection(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID := c.Locals("user_id").(string)
-		tier := c.Locals("tier").(string)
+
+		// Read the tier from the database, NOT from the JWT claim. The JWT
+		// embeds the tier at login time and lives for the access-token TTL,
+		// so admin upgrades/downgrades would otherwise take up to that long
+		// to take effect — bad for paying users and for revoking abuse.
+		// One extra DB lookup per connect is cheap.
+		userRecord, err := repository.FindUserByID(db, userID)
+		if err != nil {
+			logger.Error("RegisterConnection: failed to load user",
+				zap.String("user_id", userID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		tier := userRecord.SubscriptionTier
+		if tier == "" {
+			tier = "free"
+		}
 
 		var req registerConnectionRequest
 		if err := c.BodyParser(&req); err != nil {

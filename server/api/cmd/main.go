@@ -92,6 +92,10 @@ func main() {
 	api.Post("/auth/refresh", handler.RefreshToken(logger, cfg, db))
 	api.Post("/auth/guest", handler.GuestLogin(logger, db, cfg))
 	api.Post("/auth/admin-login", handler.AdminLogin(logger, cfg, db))
+	// /auth/link is intentionally public — the calling device is a brand-new
+	// guest that does not yet hold a token for the target account it wants
+	// to attach to via the share code.
+	api.Post("/auth/link", handler.LinkDevice(logger, cfg, db))
 	api.Get("/health", handler.Health())
 
 	// Stripe webhook — public route, authenticated via Stripe-Signature header.
@@ -120,6 +124,9 @@ func main() {
 	protected.Patch("/connections/:id/heartbeat", handler.HeartbeatConnection(logger, db))
 	protected.Post("/subscription/checkout", handler.CreateCheckoutSession(logger, cfg, db))
 	protected.Post("/subscription/cancel", handler.CancelSubscription(logger, cfg, db))
+	// Plan sharing — owner generates a code, friend's device redeems it via /auth/link.
+	protected.Post("/devices/share-code", handler.CreateShareCode(logger, db))
+	protected.Get("/devices", handler.ListMyDevices(logger, db))
 
 	// Admin routes (JWT + admin role required)
 	admin := api.Group("/admin", authMiddleware, middleware.AdminRequired())
