@@ -83,20 +83,25 @@ func AppVersion(minVersion string, logger *zap.Logger, skipRules ...SkipRule) fi
 	}
 	logger.Info("app version gate enabled", zap.String("min_version", minVersion))
 
+	// normalisePath strips a single trailing slash so the skip set is
+	// matched the same way regardless of whether a caller registered
+	// "/health" or "/health/", and regardless of whether the request path
+	// arrived with or without a slash.
+	normalisePath := func(p string) string {
+		if len(p) > 1 && p[len(p)-1] == '/' {
+			return p[:len(p)-1]
+		}
+		return p
+	}
+
 	type key struct{ method, path string }
 	skipSet := make(map[key]struct{}, len(skipRules))
 	for _, r := range skipRules {
-		skipSet[key{r.Method, r.Path}] = struct{}{}
+		skipSet[key{r.Method, normalisePath(r.Path)}] = struct{}{}
 	}
 
 	return func(c *fiber.Ctx) error {
-		// Normalise the path to strip any trailing slash so /health and
-		// /health/ behave the same way.
-		path := c.Path()
-		if len(path) > 1 && path[len(path)-1] == '/' {
-			path = path[:len(path)-1]
-		}
-		if _, skip := skipSet[key{c.Method(), path}]; skip {
+		if _, skip := skipSet[key{c.Method(), normalisePath(c.Path())}]; skip {
 			return c.Next()
 		}
 

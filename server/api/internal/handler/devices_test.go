@@ -231,6 +231,47 @@ func TestLinkDevice_ExpiredCode_Returns404(t *testing.T) {
 	}
 }
 
+// Regression test for the round-2 hardening pass: a redeemer who knows a
+// victim's device_id but NOT their secret must not be able to rebind the
+// row to a new owner.
+func TestLinkDevice_ExistingDeviceWithMismatchedSecret_Returns403(t *testing.T) {
+	db := newAuthTestDB(t)
+	victim := seedGuestUserWithTier(t, db, "free")
+	seedDevice(t, db, victim, "victim-dev", hashSecret("victim-secret"))
+
+	// Attacker holds a code from their own premium plan and tries to
+	// claim the victim's device row.
+	attacker := seedGuestUserWithTier(t, db, "premium")
+	seedLinkCode(t, db, "555555", attacker)
+
+	app := authTestApp(LinkDevice(zap.NewNop(), devicesTestConfig(), db))
+	resp := doAuthRequest(t, app, map[string]string{
+		"code":          "555555",
+		"device_id":     "victim-dev",
+		"device_secret": "attacker-guess",
+	})
+	if resp.StatusCode != fiber.StatusForbidden {
+		t.Fatalf("expected 403 (device claimed), got %d", resp.StatusCode)
+	}
+
+	// Verify the device row is STILL bound to the victim — not the attacker.
+	var boundUserID string
+	db.Raw("SELECT user_id FROM devices WHERE device_id = 'victim-dev'").Scan(&boundUserID)
+	if boundUserID != victim {
+		t.Errorf("expected victim-dev still bound to %s, got %s", victim, boundUserID)
+	}
+
+	// And the code must have been consumed since the transaction commits
+	// the consume before the secret check happens — wait actually no,
+	// the consume runs first inside the same transaction, so on rollback
+	// the code SHOULD survive. Verify that.
+	var codeCount int64
+	db.Raw("SELECT COUNT(*) FROM link_codes WHERE code = '555555'").Scan(&codeCount)
+	if codeCount != 1 {
+		t.Errorf("expected code to survive transaction rollback, got count %d", codeCount)
+	}
+}
+
 func TestLinkDevice_OwnerAtCap_Returns403(t *testing.T) {
 	db := newAuthTestDB(t)
 	// Premium = 3 devices. Seed 3 already-bound devices, then try to link a 4th.

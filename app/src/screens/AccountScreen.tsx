@@ -198,9 +198,11 @@ export function AccountScreen() {
         text: t('account.logout'),
         style: 'destructive',
         onPress: () => {
-          // logout returns a promise; fire-and-forget is fine because the
-          // store updates state before awaiting AsyncStorage and the UI
-          // re-renders immediately.
+          // logout awaits AsyncStorage removal first so a racing
+          // initialize() (e.g. on app resume) cannot read stale tokens;
+          // the UI then re-renders on the synchronous set() call after.
+          // Fire-and-forget is fine — there's nothing useful to do in the
+          // dialog after the user confirms.
           void useAuthStore.getState().logout();
         },
       },

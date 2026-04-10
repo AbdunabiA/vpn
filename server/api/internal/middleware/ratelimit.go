@@ -88,6 +88,13 @@ func RateLimit(redisClient *redis.Client, logger *zap.Logger, jwtSecret string) 
 // same way the global rate limiter does. The dedicated bucket prevents
 // link-code guessing from being amortised over the broader 30 req/min/IP
 // budget that other public endpoints share.
+//
+// OPS NOTE — Redis outage degrades this defence to fail-open (matches the
+// global limiter convention; trades availability for security under
+// failure). Monitor the "link rate limit check failed" warning frequency
+// in log aggregation. If Redis is down for an extended window, manually
+// disable /auth/link by removing the route from the running config or
+// blocking the path at nginx.
 func LinkAttemptLimit(redisClient *redis.Client, logger *zap.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		key := "link:" + c.IP()

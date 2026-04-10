@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math/big"
@@ -16,10 +17,23 @@ import (
 	"gorm.io/gorm"
 )
 
-// errDeviceLimitReached is a sentinel returned from inside the LinkDevice
-// transaction to signal that the owner is at their plan's device cap.
-// The HTTP layer maps this to 403.
-var errDeviceLimitReached = errors.New("device limit reached")
+// Sentinels returned from inside the LinkDevice transaction so the outer
+// HTTP layer can map them to the right status code without flattening
+// every transaction error to 500.
+var (
+	// errDeviceLimitReached: owner is at their plan's device cap → 403
+	errDeviceLimitReached = errors.New("device limit reached")
+
+	// errDeviceClaimedBySomeoneElse: a row already exists for this device_id,
+	// it is bound to a different user, and the redeeming client did not
+	// present that user's secret. We refuse to silently steal the row → 403.
+	errDeviceClaimedBySomeoneElse = errors.New("device already claimed")
+
+	// errOwnerMissing: the owner referenced by the link code no longer
+	// exists. Should be impossible given the FK, but if it happens we want
+	// the response to be 500 not 404 — preserves observability.
+	errOwnerMissing = errors.New("owner missing")
+)
 
 // generateLinkCode returns a 6-digit zero-padded numeric code.
 // Uses crypto/rand so codes are unguessable.
@@ -229,7 +243,10 @@ func LinkDevice(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 			// 2. Load the owner row.
 			loaded, err := repository.FindUserByID(tx, lc.UserID)
 			if err != nil {
-				return fmt.Errorf("link: owner not found: %w", err)
+				if errors.Is(err, repository.ErrNotFound) {
+					return errOwnerMissing
+				}
+				return fmt.Errorf("link: owner lookup: %w", err)
 			}
 			owner = loaded
 
@@ -251,6 +268,22 @@ func LinkDevice(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 				existingDevice = d
 			} else if !errors.Is(err, repository.ErrNotFound) {
 				return fmt.Errorf("link: lookup existing device: %w", err)
+			}
+
+			// 3a. SECURITY CHECK: if a row exists for this device_id and it
+			//     is owned by someone OTHER than the owner of this code, the
+			//     redeeming client must prove ownership by presenting the
+			//     existing row's secret. Otherwise the link flow would let
+			//     a device_id leak become an account-rebind primitive.
+			//
+			//     The "legacy migration" exception applies: if the existing
+			//     row has no secret on file (created before migration 012),
+			//     accept the link as a one-time grace upgrade.
+			if existingDevice != nil && existingDevice.UserID != owner.ID {
+				if existingDevice.DeviceSecretHash != "" &&
+					subtle.ConstantTimeCompare([]byte(existingDevice.DeviceSecretHash), []byte(secretHash)) != 1 {
+					return errDeviceClaimedBySomeoneElse
+				}
 			}
 
 			if limits.MaxDevices != model.UnlimitedDevices {
@@ -291,35 +324,53 @@ func LinkDevice(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 		})
 
 		if txErr != nil {
-			if errors.Is(txErr, repository.ErrNotFound) {
+			ownerLogID := ""
+			if owner != nil {
+				ownerLogID = owner.ID
+			}
+			switch {
+			case errors.Is(txErr, repository.ErrNotFound):
 				logger.Warn("link: invalid or expired code",
 					zap.String("device_id", req.DeviceID),
 				)
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 					"error": "invalid or expired code",
 				})
-			}
-			if errors.Is(txErr, errDeviceLimitReached) {
+			case errors.Is(txErr, errDeviceLimitReached):
 				logger.Warn("link: owner device cap reached",
 					zap.String("device_id", req.DeviceID),
-					zap.String("owner_user_id", func() string {
-						if owner != nil {
-							return owner.ID
-						}
-						return ""
-					}()),
+					zap.String("owner_user_id", ownerLogID),
 				)
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 					"error": "owner's device limit reached",
 				})
+			case errors.Is(txErr, errDeviceClaimedBySomeoneElse):
+				logger.Warn("link: device_id already claimed by another user",
+					zap.String("device_id", req.DeviceID),
+					zap.String("owner_user_id", ownerLogID),
+				)
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+					"error": "this device is already attached to another account",
+				})
+			case errors.Is(txErr, errOwnerMissing):
+				// Distinct from "code expired" — code consumed but owner row
+				// vanished. Should be impossible given the FK; logged as
+				// error so observability picks it up.
+				logger.Error("link: owner missing despite valid code",
+					zap.String("device_id", req.DeviceID),
+				)
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "internal server error",
+				})
+			default:
+				logger.Error("link: transaction failed",
+					zap.String("device_id", req.DeviceID),
+					zap.Error(txErr),
+				)
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "internal server error",
+				})
 			}
-			logger.Error("link: transaction failed",
-				zap.String("device_id", req.DeviceID),
-				zap.Error(txErr),
-			)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "internal server error",
-			})
 		}
 
 		// Best-effort orphan cleanup outside the transaction. If the device

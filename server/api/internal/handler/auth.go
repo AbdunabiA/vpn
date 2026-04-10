@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -234,8 +235,10 @@ func GuestLogin(logger *zap.Logger, db *gorm.DB, cfg *config.Config) fiber.Handl
 				// such legacy rows will be rejected after the grace period;
 				// it just means the client doesn't yet send a secret.
 				switch {
-				case device.DeviceSecretHash != "" && device.DeviceSecretHash == secretHash:
-					// authenticated
+				case device.DeviceSecretHash != "" &&
+					subtle.ConstantTimeCompare([]byte(device.DeviceSecretHash), []byte(secretHash)) == 1:
+					// authenticated — constant-time compare prevents timing
+					// side channels from leaking the prefix of a hash.
 				case device.DeviceSecretHash == "" && secretHash != "":
 					// legacy row, populate the hash on first secret-bearing call
 					_ = repository.SetDeviceSecretHash(db, device.ID, secretHash)
