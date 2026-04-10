@@ -1,0 +1,66 @@
+name: Build & Deploy Admin Panel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin-web/**'
+      - '.github/workflows/deploy-admin.yml'
+  workflow_dispatch:
+
+# This workflow is intentionally decoupled from `deploy.yml` (the backend
+# pipeline). They share only the production host and the path prefix on
+# /opt/vpn. The backend workflow ignores `admin-web/**` and this workflow
+# ignores `server/**`, so a single PR that touches both will trigger both.
+#
+# The admin panel is a fully static bundle (no runtime, no container), so
+# the "deploy" step is just an rsync/scp of the built dist/ directory to
+# /opt/vpn/admin-web/dist/, where nginx serves it under /admin/.
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin-web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: admin-web
+        run: npm ci
+
+      - name: Build
+        working-directory: admin-web
+        run: npm run build
+
+      # scp-action's `rm: true` wipes the remote target directory before
+      # copy so stale hashed asset files from previous builds don't pile
+      # up. `strip_components: 1` drops the `dist/` wrapper so files land
+      # at /opt/vpn/admin-web/dist/index.html (not dist/dist/index.html).
+      - name: Upload dist/ to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "admin-web/dist/*"
+          target: "/opt/vpn/admin-web/dist"
+          strip_components: 2
+          rm: true
+
+      - name: Verify
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            # Assert index.html landed where nginx will look for it.
+            test -f /opt/vpn/admin-web/dist/index.html
+            ls -lah /opt/vpn/admin-web/dist/
+            echo "Admin panel deployed at $(date)"
