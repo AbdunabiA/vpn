@@ -127,6 +127,7 @@ func main() {
 	// Plan sharing — owner generates a code, friend's device redeems it via /auth/link.
 	protected.Post("/devices/share-code", handler.CreateShareCode(logger, db))
 	protected.Get("/devices", handler.ListMyDevices(logger, db))
+	protected.Delete("/devices/:id", handler.DeleteMyDevice(logger, db))
 
 	// Admin routes (JWT + admin role required)
 	admin := api.Group("/admin", authMiddleware, middleware.AdminRequired())

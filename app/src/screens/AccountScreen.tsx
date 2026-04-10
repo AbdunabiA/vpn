@@ -17,8 +17,10 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useAuthStore} from '../stores/authStore';
 import {useLayout} from '../hooks/useLayout';
 import api from '../services/api';
+import {getDeviceFingerprint} from '../services/deviceFingerprint';
 import {colors, typography, spacing, borderRadius} from '../theme';
 import type {RootStackParamList} from '../navigation/RootNavigator';
+import type {BoundDevice} from '../types/api';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -41,6 +43,25 @@ function formatDate(iso: string): string {
       month: 'long',
       day: 'numeric',
     });
+  } catch {
+    return iso;
+  }
+}
+
+// Render a "last seen" label as relative time, e.g. "2 minutes ago", "3 days ago".
+// Falls back to absolute date for very old timestamps.
+function relativeTime(iso: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  try {
+    const then = new Date(iso).getTime();
+    const diffMs = Date.now() - then;
+    if (diffMs < 60_000) return t('devices.justNow');
+    const minutes = Math.floor(diffMs / 60_000);
+    if (minutes < 60) return t('devices.minutesAgo', {n: minutes});
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t('devices.hoursAgo', {n: hours});
+    const days = Math.floor(hours / 24);
+    if (days < 30) return t('devices.daysAgo', {n: days});
+    return formatDate(iso);
   } catch {
     return iso;
   }
@@ -77,11 +98,18 @@ export function AccountScreen() {
   const [linkMode, setLinkMode] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
-  // Fetch account info and active connections on mount
+  // My devices list
+  const [boundDevices, setBoundDevices] = useState<BoundDevice[] | null>(null);
+  const [thisDeviceId, setThisDeviceId] = useState<string>('');
+  const [removingDeviceId, setRemovingDeviceId] = useState<string | null>(null);
+
+  // Fetch account info, active connections, and bound devices on mount.
   useEffect(() => {
     if (isAuthenticated) {
       fetchAccount();
       fetchActiveDevices();
+      fetchBoundDevices();
+      getDeviceFingerprint().then(fp => setThisDeviceId(fp.device_id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
@@ -92,6 +120,45 @@ export function AccountScreen() {
       setActiveDevices(data.data.length);
     } catch {
       setActiveDevices(0);
+    }
+  }
+
+  async function fetchBoundDevices() {
+    try {
+      const {data} = await api.get<{data: BoundDevice[]}>('/devices');
+      setBoundDevices(data.data ?? []);
+    } catch {
+      setBoundDevices([]);
+    }
+  }
+
+  function confirmRemoveDevice(device: BoundDevice) {
+    const isThis = device.device_id === thisDeviceId;
+    Alert.alert(
+      t('devices.removeConfirmTitle'),
+      isThis
+        ? t('devices.removeSelfWarning')
+        : t('devices.removeConfirmBody', {model: device.model || device.platform}),
+      [
+        {text: t('common.cancel'), style: 'cancel'},
+        {
+          text: t('devices.removeConfirmCta'),
+          style: 'destructive',
+          onPress: () => removeDevice(device),
+        },
+      ],
+    );
+  }
+
+  async function removeDevice(device: BoundDevice) {
+    setRemovingDeviceId(device.id);
+    try {
+      await api.delete(`/devices/${device.id}`);
+      setBoundDevices(prev => (prev ?? []).filter(d => d.id !== device.id));
+    } catch {
+      Alert.alert(t('common.error'), t('devices.removeError'));
+    } finally {
+      setRemovingDeviceId(null);
     }
   }
 
@@ -365,6 +432,45 @@ export function AccountScreen() {
           </View>
         )}
 
+        {/* My devices — list of every device bound to this account.
+            Lets the owner free a quota slot when a friend's iOS reinstall
+            (or factory reset) leaves a ghost row in the database. */}
+        {boundDevices && boundDevices.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>{t('devices.title')}</Text>
+            <Text style={styles.cardSubtle}>{t('devices.subtitle')}</Text>
+            {boundDevices.map(device => {
+              const isThis = device.device_id === thisDeviceId;
+              const removing = removingDeviceId === device.id;
+              return (
+                <View key={device.id} style={styles.deviceRow}>
+                  <View style={styles.deviceInfo}>
+                    <Text style={styles.deviceName}>
+                      {device.model || device.platform || 'Unknown device'}
+                      {isThis && <Text style={styles.deviceThisTag}>  · {t('devices.thisDevice')}</Text>}
+                    </Text>
+                    <Text style={styles.deviceMeta}>
+                      {device.platform} · {t('devices.lastSeen')} {relativeTime(device.last_seen_at, t)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.removeDeviceBtn}
+                    onPress={() => confirmRemoveDevice(device)}
+                    disabled={removing}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('devices.remove')}>
+                    {removing ? (
+                      <ActivityIndicator color={colors.error} size="small" />
+                    ) : (
+                      <Text style={styles.removeDeviceText}>{t('devices.remove')}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* Stats row */}
         <View style={styles.statsRow}>
           <View style={[styles.statCard, styles.statCardLeft]}>
@@ -597,6 +703,45 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 6,
     fontFamily: 'monospace',
+  },
+
+  // Bound devices list
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  deviceInfo: {
+    flex: 1,
+  },
+  deviceName: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+  },
+  deviceThisTag: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  deviceMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  removeDeviceBtn: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.error,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  removeDeviceText: {
+    ...typography.captionBold,
+    color: colors.error,
   },
 
   // Stats row

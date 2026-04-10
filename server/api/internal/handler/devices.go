@@ -298,3 +298,47 @@ func ListMyDevices(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		return c.JSON(fiber.Map{"data": devices})
 	}
 }
+
+// DeleteMyDevice handles DELETE /devices/:id.
+//
+// Removes one device row from the calling user's quota. Used by the plan
+// owner to evict a slot occupied by a device that has gone away (lost
+// phone, factory reset, iOS reinstall that generated a new IDFV, friend
+// who never came back).
+//
+// Authorisation: a user can only delete devices they currently own.
+// The repository check enforces this — passing someone else's device id
+// returns 404 just like a non-existent id.
+func DeleteMyDevice(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := c.Locals("user_id").(string)
+		deviceRowID := c.Params("id")
+		if deviceRowID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "device id required",
+			})
+		}
+
+		if err := repository.DeleteDeviceByOwner(db, deviceRowID, userID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "device not found",
+				})
+			}
+			logger.Error("delete-device failed",
+				zap.String("user_id", userID),
+				zap.String("device_row_id", deviceRowID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		logger.Info("device removed",
+			zap.String("user_id", userID),
+			zap.String("device_row_id", deviceRowID),
+		)
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+}

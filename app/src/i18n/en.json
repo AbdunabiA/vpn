@@ -97,6 +97,22 @@
       }
     }
   },
+  "devices": {
+    "title": "My devices",
+    "subtitle": "Devices currently using this plan. Remove one to free a slot.",
+    "thisDevice": "this device",
+    "lastSeen": "last seen",
+    "justNow": "just now",
+    "minutesAgo": "{{n}} min ago",
+    "hoursAgo": "{{n}} h ago",
+    "daysAgo": "{{n}} d ago",
+    "remove": "Remove",
+    "removeConfirmTitle": "Remove device?",
+    "removeConfirmBody": "{{model}} will lose access to this plan and free a slot.",
+    "removeSelfWarning": "This is the device you are using right now. After removing it you will be signed out and a new free guest account will be created on next launch.",
+    "removeConfirmCta": "Remove",
+    "removeError": "Could not remove the device. Please try again."
+  },
   "share": {
     "shareTitle": "Share your plan",
     "shareSubtitle": "Generate a one-time code to add a friend's device to this plan.",

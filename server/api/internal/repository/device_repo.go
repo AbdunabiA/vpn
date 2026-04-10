@@ -90,3 +90,31 @@ func ListDevicesByUser(db *gorm.DB, userID string) ([]model.Device, error) {
 		Find(&devices)
 	return devices, result.Error
 }
+
+// DeleteDeviceByOwner removes a device row but only if it currently belongs
+// to the calling user. Returns ErrNotFound when no such row exists (covers
+// both "id does not exist" and "you don't own that device").
+//
+// Used by the in-app "Remove device" UI so a plan owner can free a slot
+// after a friend's iOS reinstall (which generates a fresh IDFV) leaves a
+// ghost device row consuming a quota slot.
+func DeleteDeviceByOwner(db *gorm.DB, deviceRowID, ownerUserID string) error {
+	result := db.Where("id = ? AND user_id = ?", deviceRowID, ownerUserID).
+		Delete(&model.Device{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteStaleDevices removes devices whose last_seen_at is older than the
+// given cutoff. Called by the background scheduler to free quota slots
+// occupied by devices the user has stopped using (factory reset, lost
+// phone, friend who never came back).
+func DeleteStaleDevices(db *gorm.DB, olderThan time.Time) (int64, error) {
+	result := db.Where("last_seen_at < ?", olderThan).Delete(&model.Device{})
+	return result.RowsAffected, result.Error
+}

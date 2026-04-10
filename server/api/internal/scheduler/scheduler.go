@@ -113,4 +113,15 @@ func runCleanup(db *gorm.DB, logger *zap.Logger) {
 	} else if codeCount > 0 {
 		logger.Info("expired link codes cleaned up", zap.Int64("count", codeCount))
 	}
+
+	// Free quota slots occupied by devices that have not been seen for 30+ days.
+	// This is the safety net for the iOS reinstall edge case (and for any
+	// device the user has stopped using). Owners can also remove devices
+	// manually via DELETE /devices/:id.
+	deviceCount, err := repository.DeleteStaleDevices(db, time.Now().Add(-30*24*time.Hour))
+	if err != nil {
+		logger.Error("stale device cleanup failed", zap.Error(err))
+	} else if deviceCount > 0 {
+		logger.Info("stale devices cleaned up", zap.Int64("count", deviceCount))
+	}
 }
