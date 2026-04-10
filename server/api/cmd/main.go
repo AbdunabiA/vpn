@@ -78,6 +78,11 @@ func main() {
 		middleware.SkipRule{Method: fiber.MethodGet, Path: "/api/v1/health"},
 		middleware.SkipRule{Method: fiber.MethodPost, Path: "/api/v1/webhook/stripe"},
 		middleware.SkipRule{Method: fiber.MethodPost, Path: "/api/v1/auth/admin-login"},
+		// The web admin panel does not send X-App-Version. Both the refresh
+		// endpoint (called whenever the 5-min access token expires) and the
+		// entire /admin/ route tree must bypass the mobile version gate.
+		middleware.SkipRule{Method: fiber.MethodPost, Path: "/api/v1/auth/refresh"},
+		middleware.SkipRule{Path: "/api/v1/admin/", Prefix: true},
 	))
 
 	// Redis-backed per-user rate limiting. Decodes the JWT (when present) to
