@@ -59,11 +59,16 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     // Loaded from SharedPreferences on start; updated via ACTION_SET_EXCLUDED_APPS.
     private var excludedApps: List<String> = emptyList()
 
-    // Traffic stats — UID-based byte counters from android.net.TrafficStats.
-    // We capture a baseline on connect so the broadcast values represent only
-    // the bytes consumed during the current VPN session, not the lifetime UID
-    // counters maintained since device boot.
+    // Traffic stats — read from /proc/net/dev for the TUN interface created by
+    // VpnService.Builder.establish(). The TUN device sees DECRYPTED user data
+    // before xray-core wraps it in VLESS/REALITY, so the byte counts reflect
+    // exactly what the user's apps consumed/transmitted — no padding overhead,
+    // no other-app traffic, no encryption inflation.
+    //
+    // We capture a baseline on connect so broadcast values represent only the
+    // current session, not the lifetime kernel counters.
     private val statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var statsTunInterface: String? = null
     private var statsBaselineRx: Long = 0
     private var statsBaselineTx: Long = 0
     private var statsLastRx: Long = 0
@@ -285,32 +290,99 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     // MARK: - Traffic stats polling
 
     /**
-     * Start the 1-second traffic stats poller. Captures the current per-UID
+     * Find the TUN interface name created by VpnService.Builder.establish() by
+     * scanning network interfaces for one bound to our 10.0.0.2 tunnel address.
+     * Falls back to the first tun-prefixed or vpn-prefixed interface in /proc/net/dev.
+     */
+    private fun detectTunInterface(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
+            for (iface in interfaces) {
+                val name = iface.name ?: continue
+                if (!name.startsWith("tun") && !name.startsWith("vpn")) continue
+                val addrs = iface.interfaceAddresses ?: continue
+                for (addr in addrs) {
+                    val host = addr.address?.hostAddress ?: continue
+                    if (host == "10.0.0.2") return name
+                }
+            }
+            // Fallback: any tun-prefixed or vpn-prefixed interface present in the kernel.
+            val all = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
+            for (iface in all) {
+                val name = iface.name ?: continue
+                if (name.startsWith("tun") || name.startsWith("vpn")) return name
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "detectTunInterface error: ${e.message}")
+        }
+        return null
+    }
+
+    /**
+     * Read /proc/net/dev and return (rxBytes, txBytes) for the given interface.
+     *
+     * The /proc/net/dev format is two header lines followed by one row per
+     * interface: "ifname: rxBytes rxPackets ... (16 columns total) txBytes ..."
+     * The 1st numeric column is rx_bytes; the 9th is tx_bytes.
+     *
+     * For a TUN device managed by VpnService, the kernel convention is:
+     *   - tun.RX = bytes the kernel received from userspace via the fd
+     *              (i.e. tun2socks WROTE these — decrypted server responses
+     *              that the kernel will route to the requesting app).
+     *              => This is the user-perceived DOWNLOAD.
+     *   - tun.TX = bytes the kernel transmitted to userspace via the fd
+     *              (i.e. outgoing app packets queued for tun2socks to read).
+     *              => This is the user-perceived UPLOAD.
+     */
+    private fun readInterfaceStats(iface: String): Pair<Long, Long>? {
+        try {
+            val file = java.io.File("/proc/net/dev")
+            if (!file.canRead()) return null
+            val prefix = "$iface:"
+            file.bufferedReader().use { reader ->
+                while (true) {
+                    val line = reader.readLine() ?: return null
+                    val trimmed = line.trimStart()
+                    if (!trimmed.startsWith(prefix)) continue
+                    val data = trimmed.substring(prefix.length).trim()
+                    val parts = data.split("\\s+".toRegex())
+                    if (parts.size < 16) return null
+                    val rx = parts[0].toLongOrNull() ?: return null
+                    val tx = parts[8].toLongOrNull() ?: return null
+                    return Pair(rx, tx)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "readInterfaceStats($iface) error: ${e.message}")
+        }
+        @Suppress("UNREACHABLE_CODE")
+        return null
+    }
+
+    /**
+     * Start the 1-second traffic stats poller. Captures the current per-TUN
      * byte counters as the session baseline so subsequent broadcasts report
      * only what was consumed during this VPN session.
-     *
-     * Uses TrafficStats by UID (not by interface) because the interface name
-     * Android assigns to the TUN device varies and the API by UID covers all
-     * traffic produced by our app process and the :vpn process. The non-VPN
-     * traffic (API calls to vpnapi, ad SDK) is small relative to tunnel data
-     * and acceptable for a UI display.
      */
     private fun startStatsPolling() {
-        try {
-            val uid = android.os.Process.myUid()
-            statsBaselineRx = android.net.TrafficStats.getUidRxBytes(uid).coerceAtLeast(0)
-            statsBaselineTx = android.net.TrafficStats.getUidTxBytes(uid).coerceAtLeast(0)
-            statsLastRx = statsBaselineRx
-            statsLastTx = statsBaselineTx
-            statsLastTime = android.os.SystemClock.elapsedRealtime()
-        } catch (e: Throwable) {
-            Log.w(TAG, "startStatsPolling: failed to read baseline: ${e.message}")
+        // Detect TUN interface name now — VpnService.Builder.establish()
+        // has already brought it up.
+        statsTunInterface = detectTunInterface()
+        Log.i(TAG, "stats: tun interface = ${statsTunInterface ?: "<none>"}")
+
+        val initial = statsTunInterface?.let { readInterfaceStats(it) }
+        if (initial != null) {
+            statsBaselineRx = initial.first
+            statsBaselineTx = initial.second
+            statsLastRx = initial.first
+            statsLastTx = initial.second
+        } else {
             statsBaselineRx = 0
             statsBaselineTx = 0
             statsLastRx = 0
             statsLastTx = 0
-            statsLastTime = android.os.SystemClock.elapsedRealtime()
         }
+        statsLastTime = android.os.SystemClock.elapsedRealtime()
         statsHandler.removeCallbacks(statsRunnable)
         statsHandler.postDelayed(statsRunnable, STATS_INTERVAL_MS)
     }
@@ -318,25 +390,29 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
     /** Stop the stats poller. Idempotent. */
     private fun stopStatsPolling() {
         statsHandler.removeCallbacks(statsRunnable)
+        statsTunInterface = null
     }
 
     /**
-     * Read current per-UID byte counters and broadcast a TrafficStats payload.
+     * Read current TUN interface byte counters and broadcast a TrafficStats payload.
      * Session bytes = current - baseline.
      * Speed = (current - last_tick) / seconds_since_last_tick.
      */
     private fun broadcastTrafficStats() {
         try {
-            val uid = android.os.Process.myUid()
-            val rx = android.net.TrafficStats.getUidRxBytes(uid).coerceAtLeast(0)
-            val tx = android.net.TrafficStats.getUidTxBytes(uid).coerceAtLeast(0)
+            val iface = statsTunInterface ?: detectTunInterface()?.also { statsTunInterface = it }
+            if (iface == null) return
+
+            val current = readInterfaceStats(iface) ?: return
+            val rx = current.first
+            val tx = current.second
             val now = android.os.SystemClock.elapsedRealtime()
 
             val sessionRx = (rx - statsBaselineRx).coerceAtLeast(0)
             val sessionTx = (tx - statsBaselineTx).coerceAtLeast(0)
 
-            // Guard against zero-divide and counter rollover (uid stats reset
-            // on package reinstall, which can briefly produce negative deltas).
+            // Guard against zero-divide and the kernel resetting counters when
+            // the TUN device gets recreated (rebuildTunInterface for split tunnel).
             val deltaMs = (now - statsLastTime).coerceAtLeast(1)
             val deltaSec = deltaMs / 1000.0
             val speedDownBps = ((rx - statsLastRx).coerceAtLeast(0)).toDouble() / deltaSec
@@ -666,6 +742,19 @@ class TunnelVpnService : VpnService(), ProtectSocket, StatusCallback {
                 Log.e(TAG, "tun2socks re-attach error: $tunResult")
                 stopVpn(isManual = false)
                 return
+            }
+
+            // 5. Re-baseline traffic stats — the new TUN device starts fresh
+            //    counters and may even have a new interface name. Without this
+            //    the next stats tick would compute a huge negative delta which
+            //    coerceAtLeast(0) would clamp to 0 indefinitely.
+            statsTunInterface = detectTunInterface()
+            val rebased = statsTunInterface?.let { readInterfaceStats(it) }
+            if (rebased != null) {
+                statsBaselineRx = rebased.first - (statsLastRx - statsBaselineRx)
+                statsBaselineTx = rebased.second - (statsLastTx - statsBaselineTx)
+                statsLastRx = rebased.first
+                statsLastTx = rebased.second
             }
 
             Log.i(TAG, "TUN interface rebuilt successfully with ${excludedApps.size} excluded apps")
