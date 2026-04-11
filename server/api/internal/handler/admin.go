@@ -494,6 +494,67 @@ func AdminGetStats(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	}
 }
 
+// AdminGetAnalytics handles GET /admin/analytics.
+// Returns everything the dashboard's "deep-dive" analytics section
+// needs in a single response so the panel makes one round-trip
+// instead of four. Query params: days (default 30, max 180),
+// top_servers_limit (default 5, max 50).
+//
+// The payload is a fixed-shape object with a nullable field per
+// sub-query; a failure in one sub-query does not fail the whole
+// endpoint — the UI renders a targeted error card for just that
+// widget. This keeps the dashboard mostly-working even when, say,
+// the top-servers join hits a cold cache.
+func AdminGetAnalytics(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		days, _ := strconv.Atoi(c.Query("days", "30"))
+		topLimit, _ := strconv.Atoi(c.Query("top_servers_limit", "5"))
+
+		type payload struct {
+			Traffic    interface{} `json:"traffic"`
+			Platforms  interface{} `json:"platforms"`
+			Tiers      interface{} `json:"tiers"`
+			TopServers interface{} `json:"top_servers"`
+			Errors     fiber.Map   `json:"errors,omitempty"`
+		}
+		var out payload
+		errs := fiber.Map{}
+
+		if traffic, err := repository.GetBytesTimeseries(db, days); err != nil {
+			logger.Error("analytics: bytes timeseries failed", zap.Error(err))
+			errs["traffic"] = err.Error()
+		} else {
+			out.Traffic = traffic
+		}
+
+		if platforms, err := repository.GetPlatformBreakdown(db); err != nil {
+			logger.Error("analytics: platform breakdown failed", zap.Error(err))
+			errs["platforms"] = err.Error()
+		} else {
+			out.Platforms = platforms
+		}
+
+		if tiers, err := repository.GetTierBreakdown(db); err != nil {
+			logger.Error("analytics: tier breakdown failed", zap.Error(err))
+			errs["tiers"] = err.Error()
+		} else {
+			out.Tiers = tiers
+		}
+
+		if top, err := repository.GetTopServers(db, days, topLimit); err != nil {
+			logger.Error("analytics: top servers failed", zap.Error(err))
+			errs["top_servers"] = err.Error()
+		} else {
+			out.TopServers = top
+		}
+
+		if len(errs) > 0 {
+			out.Errors = errs
+		}
+		return c.JSON(fiber.Map{"data": out})
+	}
+}
+
 // AdminGetStatsTimeseries handles GET /admin/stats/timeseries.
 // Query params: days (default 30, max 180).
 // Returns per-day signup and connection counts, zero-padded so the

@@ -248,6 +248,203 @@ func GetTimeseries(db *gorm.DB, days int) (signups, connections []TimeseriesBuck
 	return signups, connections, nil
 }
 
+// BytesBucket is a per-day bandwidth count. Emitted by GetBytesTimeseries
+// to drive the dashboard's traffic chart. Up/down are stored separately
+// because charts typically plot them as two stacked series.
+type BytesBucket struct {
+	Date      string `json:"date"`
+	BytesUp   int64  `json:"bytes_up"`
+	BytesDown int64  `json:"bytes_down"`
+}
+
+// GetBytesTimeseries returns per-day bytes_up and bytes_down totals for
+// the last `days` days. The query SUMs over the `connections` table
+// grouped by the day of `connected_at` — so a long-running connection
+// counts entirely on the day it *started*, not the day bytes were
+// actually moved. Good enough for capacity-planning trend lines; if
+// you ever need high-precision accounting, log incremental deltas.
+func GetBytesTimeseries(db *gorm.DB, days int) ([]BytesBucket, error) {
+	if db == nil {
+		return nil, errNilDB
+	}
+	if days <= 0 || days > 180 {
+		days = 30
+	}
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startDay := today.AddDate(0, 0, -(days - 1))
+
+	type row struct {
+		Day       string
+		BytesUp   int64
+		BytesDown int64
+	}
+	var rows []row
+	if err := db.Model(&model.Connection{}).
+		Select(
+			"TO_CHAR(DATE_TRUNC('day', connected_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day, " +
+				"COALESCE(SUM(bytes_up), 0) AS bytes_up, " +
+				"COALESCE(SUM(bytes_down), 0) AS bytes_down",
+		).
+		Where("connected_at >= ?", startDay).
+		Group("day").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("querying bytes timeseries: %w", err)
+	}
+
+	index := make(map[string]row, len(rows))
+	for _, r := range rows {
+		index[r.Day] = r
+	}
+
+	out := make([]BytesBucket, 0, days)
+	for i := 0; i < days; i++ {
+		day := startDay.AddDate(0, 0, i).Format("2006-01-02")
+		r := index[day]
+		out = append(out, BytesBucket{
+			Date:      day,
+			BytesUp:   r.BytesUp,
+			BytesDown: r.BytesDown,
+		})
+	}
+	return out, nil
+}
+
+// PlatformCount pairs a device platform string ("android", "ios", ...)
+// with the number of devices currently bound to that platform across
+// the whole user base.
+type PlatformCount struct {
+	Platform string `json:"platform"`
+	Count    int64  `json:"count"`
+}
+
+// GetPlatformBreakdown returns one row per distinct platform in the
+// devices table with the number of devices on that platform. The
+// devices table has at most one row per physical device (share-code
+// redemption reassigns user_id in place), so this is also the count
+// of active physical devices by platform.
+//
+// Empty-string platforms are reported as "unknown" in the output so
+// the UI does not need to special-case missing data.
+func GetPlatformBreakdown(db *gorm.DB) ([]PlatformCount, error) {
+	if db == nil {
+		return nil, errNilDB
+	}
+	type row struct {
+		Platform string
+		Count    int64
+	}
+	var rows []row
+	if err := db.Model(&model.Device{}).
+		Select("platform, COUNT(*) AS count").
+		Group("platform").
+		Order("count DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("querying platform breakdown: %w", err)
+	}
+	out := make([]PlatformCount, 0, len(rows))
+	for _, r := range rows {
+		name := r.Platform
+		if name == "" {
+			name = "unknown"
+		}
+		out = append(out, PlatformCount{Platform: name, Count: r.Count})
+	}
+	return out, nil
+}
+
+// TierCount is the free/premium/ultimate distribution row.
+type TierCount struct {
+	Tier  string `json:"tier"`
+	Count int64  `json:"count"`
+}
+
+// GetTierBreakdown returns the number of users on each subscription
+// tier. Zero-fills missing tiers so the UI always receives a row for
+// each of {free, premium, ultimate} regardless of whether the tier
+// currently has any users — lets the donut chart render a stable
+// legend.
+func GetTierBreakdown(db *gorm.DB) ([]TierCount, error) {
+	if db == nil {
+		return nil, errNilDB
+	}
+	type row struct {
+		Tier  string
+		Count int64
+	}
+	var rows []row
+	if err := db.Model(&model.User{}).
+		Select("subscription_tier AS tier, COUNT(*) AS count").
+		Group("subscription_tier").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("querying tier breakdown: %w", err)
+	}
+	// Zero-fill canonical tiers in a fixed order.
+	indexed := map[string]int64{}
+	for _, r := range rows {
+		indexed[r.Tier] = r.Count
+	}
+	canonical := []string{"free", "premium", "ultimate"}
+	out := make([]TierCount, 0, len(canonical))
+	for _, t := range canonical {
+		out = append(out, TierCount{Tier: t, Count: indexed[t]})
+	}
+	return out, nil
+}
+
+// ServerUsage is one row of the "top N servers by connection count"
+// analytics. Joins vpn_servers so the UI can render city/country
+// without a second round-trip.
+type ServerUsage struct {
+	ServerID        string `json:"server_id"`
+	Hostname        string `json:"hostname"`
+	City            string `json:"city"`
+	Country         string `json:"country"`
+	CountryCode     string `json:"country_code"`
+	ConnectionCount int64  `json:"connection_count"`
+}
+
+// GetTopServers returns the `limit` servers that handled the most
+// connections in the last `days` days, newest-most-active first.
+// Uses a plain INNER JOIN so servers with zero recent connections
+// are excluded — the panel shows these as an empty-state instead.
+func GetTopServers(db *gorm.DB, days, limit int) ([]ServerUsage, error) {
+	if db == nil {
+		return nil, errNilDB
+	}
+	if days <= 0 || days > 180 {
+		days = 30
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startDay := today.AddDate(0, 0, -(days - 1))
+
+	var out []ServerUsage
+	if err := db.Table("connections").
+		Select(
+			"vpn_servers.id AS server_id, " +
+				"vpn_servers.hostname AS hostname, " +
+				"vpn_servers.city AS city, " +
+				"vpn_servers.country AS country, " +
+				"vpn_servers.country_code AS country_code, " +
+				"COUNT(connections.id) AS connection_count",
+		).
+		Joins("INNER JOIN vpn_servers ON vpn_servers.id = connections.server_id").
+		Where("connections.connected_at >= ?", startDay).
+		Group("vpn_servers.id, vpn_servers.hostname, vpn_servers.city, vpn_servers.country, vpn_servers.country_code").
+		Order("connection_count DESC").
+		Limit(limit).
+		Scan(&out).Error; err != nil {
+		return nil, fmt.Errorf("querying top servers: %w", err)
+	}
+	return out, nil
+}
+
 // FindUserByIDAdmin looks up any user by UUID for admin use.
 // Wraps the sentinel error so callers can use errors.Is(err, ErrNotFound).
 func FindUserByIDAdmin(db *gorm.DB, id string) (*model.User, error) {
