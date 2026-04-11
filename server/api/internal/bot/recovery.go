@@ -32,6 +32,7 @@ import (
 	"vpnapp/server/api/internal/repository"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -41,6 +42,7 @@ import (
 type Recovery struct {
 	api    *tgbotapi.BotAPI
 	db     *gorm.DB
+	rdb    *redis.Client
 	logger *zap.Logger
 	cfg    *config.Config
 
@@ -68,9 +70,12 @@ type pendingRestore struct {
 // network unreachable at startup). A network error at startup is
 // still fatal because we want loud failures during deploy, not a
 // silent dead bot.
-func New(cfg *config.Config, db *gorm.DB, logger *zap.Logger) (*Recovery, error) {
+func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client, logger *zap.Logger) (*Recovery, error) {
 	if cfg.RecoveryBotToken == "" {
 		return nil, nil
+	}
+	if rdb == nil {
+		return nil, fmt.Errorf("bot: redis client is required for start-token lookup")
 	}
 	api, err := tgbotapi.NewBotAPI(cfg.RecoveryBotToken)
 	if err != nil {
@@ -93,6 +98,7 @@ func New(cfg *config.Config, db *gorm.DB, logger *zap.Logger) (*Recovery, error)
 	return &Recovery{
 		api:             api,
 		db:              db,
+		rdb:             rdb,
 		logger:          logger,
 		cfg:             cfg,
 		pendingRestores: make(map[string]pendingRestore),
@@ -186,26 +192,25 @@ func (r *Recovery) handleStart(ctx context.Context, msg *tgbotapi.Message) {
 	}
 }
 
-// handleLink validates a tg_link token and binds the sender's
-// Telegram id to the VPN user id carried in the token.
+// handleLink consumes a link start token from Redis and binds the
+// sender's Telegram id to the VPN user id it references.
 func (r *Recovery) handleLink(ctx context.Context, msg *tgbotapi.Message, token string) {
-	_ = ctx // reserved for future per-request timeouts
 	logger := r.logger.With(
 		zap.Int64("tg_user_id", msg.From.ID),
 		zap.String("tg_username", msg.From.UserName),
 	)
-	claims, err := recovery.ParseToken(r.cfg.JWTSecret, token)
+	payload, err := recovery.ConsumeStartToken(ctx, r.rdb, token)
 	if err != nil {
 		logger.Warn("telegram recovery bot: invalid link token", zap.Error(err))
 		r.reply(msg.Chat.ID, "❌ Ссылка истекла или недействительна. Откройте приложение и попробуйте ещё раз.")
 		return
 	}
-	if claims.Purpose != recovery.PurposeLink {
+	if payload.Purpose != recovery.PurposeLink {
 		logger.Warn("telegram recovery bot: link endpoint called with non-link token")
 		r.reply(msg.Chat.ID, "❌ Неверный тип ссылки.")
 		return
 	}
-	if err := repository.LinkTelegramAccount(r.db, claims.Subject, msg.From.ID); err != nil {
+	if err := repository.LinkTelegramAccount(r.db, payload.Subject, msg.From.ID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			r.reply(msg.Chat.ID, "❌ Аккаунт VPN не найден. Попробуйте войти в приложение заново.")
 			return
@@ -222,9 +227,9 @@ func (r *Recovery) handleLink(ctx context.Context, msg *tgbotapi.Message, token 
 		return
 	}
 	logger.Info("telegram recovery bot: linked",
-		zap.String("user_id", claims.Subject),
+		zap.String("user_id", payload.Subject),
 	)
-	r.writeAudit("tg_link", claims.Subject, msg.From.ID, msg.Chat.ID)
+	r.writeAudit("tg_link", payload.Subject, msg.From.ID, msg.Chat.ID)
 	r.reply(msg.Chat.ID,
 		"✅ Аккаунт VPN привязан к этому Telegram.\n\n"+
 			"Теперь вы можете восстановить подписку на любом новом устройстве "+
@@ -232,25 +237,24 @@ func (r *Recovery) handleLink(ctx context.Context, msg *tgbotapi.Message, token 
 	)
 }
 
-// handleRestore validates a tg_restore token, looks up the old
+// handleRestore consumes a restore start token, looks up the old
 // user by the sender's Telegram id, and shows an inline keyboard
 // asking the user to confirm the merge. The actual merge happens
 // in handleCallback when the user taps Yes.
 func (r *Recovery) handleRestore(ctx context.Context, msg *tgbotapi.Message, token string) {
-	_ = ctx
 	logger := r.logger.With(zap.Int64("tg_user_id", msg.From.ID))
-	claims, err := recovery.ParseToken(r.cfg.JWTSecret, token)
+	payload, err := recovery.ConsumeStartToken(ctx, r.rdb, token)
 	if err != nil {
 		logger.Warn("telegram recovery bot: invalid restore token", zap.Error(err))
 		r.reply(msg.Chat.ID, "❌ Ссылка истекла. Откройте приложение и нажмите «Восстановить через Telegram» заново.")
 		return
 	}
-	if claims.Purpose != recovery.PurposeRestore {
+	if payload.Purpose != recovery.PurposeRestore {
 		logger.Warn("telegram recovery bot: restore endpoint called with non-restore token")
 		r.reply(msg.Chat.ID, "❌ Неверный тип ссылки.")
 		return
 	}
-	newUserID := claims.Subject
+	newUserID := payload.Subject
 
 	oldUser, err := repository.FindUserByTelegramID(r.db, msg.From.ID)
 	if err != nil {

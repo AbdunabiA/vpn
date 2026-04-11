@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 
-	"vpnapp/server/api/internal/config"
 	"vpnapp/server/api/internal/recovery"
 	"vpnapp/server/api/internal/repository"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -29,10 +29,16 @@ func SetTelegramBotUsername(u string) { telegramBotUsername = u }
 // TelegramLinkIntent handles POST /auth/telegram/link-intent.
 // The caller must be an authenticated VPN user. Returns a
 // short-lived deep link pointing at the recovery bot's /start
-// endpoint with a tg_link JWT encoded in the payload. The mobile
-// app opens the URL via Linking.openURL and the bot takes over
-// from there.
-func TelegramLinkIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler {
+// endpoint with a Redis-backed opaque token encoded in the
+// payload. The mobile app opens the URL via Linking.openURL and
+// the bot takes over from there.
+//
+// Token format is critical: Telegram's /start payload is capped
+// at 64 characters and only accepts [A-Za-z0-9_-]. JWTs exceed
+// both limits (they contain "." and average ~200 chars), so we
+// mint a 32-char opaque token stored in Redis instead of a
+// signed JWT. See recovery/start_token.go for details.
+func TelegramLinkIntent(logger *zap.Logger, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
 		if userID == "" {
@@ -40,9 +46,9 @@ func TelegramLinkIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler {
 				"error": "unauthorized",
 			})
 		}
-		token, err := recovery.NewToken(cfg.JWTSecret, userID, recovery.PurposeLink)
+		token, err := recovery.MintStartToken(c.Context(), rdb, userID, recovery.PurposeLink)
 		if err != nil {
-			logger.Error("telegram: link-intent token generation failed",
+			logger.Error("telegram: link-intent mint failed",
 				zap.String("user_id", userID),
 				zap.Error(err),
 			)
@@ -55,7 +61,7 @@ func TelegramLinkIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler {
 		return c.JSON(fiber.Map{
 			"data": fiber.Map{
 				"url":     url,
-				"expires": int(recovery.TTL.Seconds()),
+				"expires": int(recovery.StartTokenTTL.Seconds()),
 			},
 		})
 	}
@@ -63,11 +69,11 @@ func TelegramLinkIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler {
 
 // TelegramRestoreIntent handles POST /auth/telegram/restore-intent.
 // The caller is authenticated as a *new* guest user — the one just
-// created on a fresh install. Returns a deep link with a tg_restore
-// JWT whose sub claim is the new guest's user id. The bot takes
-// from.id from the /start sender, looks up the old user via
-// FindUserByTelegramID, and runs PerformRestore(old, new, tgID).
-func TelegramRestoreIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler {
+// created on a fresh install. Returns a deep link with a restore
+// start token whose value points to the new guest's user id. The
+// bot takes from.id from the /start sender, looks up the old user
+// via FindUserByTelegramID, and runs PerformRestore(old, new, tgID).
+func TelegramRestoreIntent(logger *zap.Logger, rdb *redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(string)
 		if userID == "" {
@@ -75,9 +81,9 @@ func TelegramRestoreIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler
 				"error": "unauthorized",
 			})
 		}
-		token, err := recovery.NewToken(cfg.JWTSecret, userID, recovery.PurposeRestore)
+		token, err := recovery.MintStartToken(c.Context(), rdb, userID, recovery.PurposeRestore)
 		if err != nil {
-			logger.Error("telegram: restore-intent token generation failed",
+			logger.Error("telegram: restore-intent mint failed",
 				zap.String("user_id", userID),
 				zap.Error(err),
 			)
@@ -90,7 +96,7 @@ func TelegramRestoreIntent(logger *zap.Logger, cfg *config.Config) fiber.Handler
 		return c.JSON(fiber.Map{
 			"data": fiber.Map{
 				"url":     url,
-				"expires": int(recovery.TTL.Seconds()),
+				"expires": int(recovery.StartTokenTTL.Seconds()),
 			},
 		})
 	}

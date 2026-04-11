@@ -171,8 +171,8 @@ func main() {
 	// whether the user is already linked; the unlink endpoint
 	// clears the binding so the user can re-link to a different
 	// Telegram account.
-	protected.Post("/auth/telegram/link-intent", handler.TelegramLinkIntent(logger, cfg))
-	protected.Post("/auth/telegram/restore-intent", handler.TelegramRestoreIntent(logger, cfg))
+	protected.Post("/auth/telegram/link-intent", handler.TelegramLinkIntent(logger, redisClient))
+	protected.Post("/auth/telegram/restore-intent", handler.TelegramRestoreIntent(logger, redisClient))
 	protected.Get("/account/telegram-status", handler.TelegramStatus(logger, db))
 	protected.Delete("/account/telegram", handler.TelegramUnlink(logger, db))
 
@@ -209,7 +209,7 @@ func main() {
 	// the lifetime of the process, cancelled via botCtx on shutdown.
 	botCtx, botCancel := context.WithCancel(context.Background())
 	defer botCancel()
-	recoveryBot, err := bot.New(cfg, db, logger)
+	recoveryBot, err := bot.New(cfg, db, redisClient, logger)
 	if err != nil {
 		logger.Fatal("failed to initialise telegram recovery bot", zap.Error(err))
 	}
