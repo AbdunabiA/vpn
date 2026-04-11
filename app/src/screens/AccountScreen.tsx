@@ -10,7 +10,9 @@ import {
   ActivityIndicator,
   Alert,
   Share,
+  RefreshControl,
 } from 'react-native';
+import {useQueryClient} from '@tanstack/react-query';
 import {useTranslation} from 'react-i18next';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
@@ -108,6 +110,27 @@ export function AccountScreen() {
   const [boundDevices, setBoundDevices] = useState<BoundDevice[] | null>(null);
   const [thisDeviceId, setThisDeviceId] = useState<string>('');
   const [removingDeviceId, setRemovingDeviceId] = useState<string | null>(null);
+
+  // Pull-to-refresh state. The refresh handler re-runs every data
+  // fetch on this screen plus the TanStack Query caches so the
+  // Telegram card updates too.
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        fetchAccount(),
+        fetchActiveDevices(),
+        fetchBoundDevices(),
+        queryClient.invalidateQueries({queryKey: ['telegram-status']}),
+        queryClient.invalidateQueries({queryKey: ['subscription']}),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   // Fetch account info, active connections, and bound devices on mount.
   useEffect(() => {
@@ -282,7 +305,15 @@ export function AccountScreen() {
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={[styles.content, tabletContentStyle]}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }>
         {/* Avatar + Name header */}
         <View style={styles.headerCard}>
           <View

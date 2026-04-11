@@ -12,10 +12,11 @@ import (
 // RestoreResult is the summary the restore handler feeds back to the
 // Telegram bot so it can answer the user with concrete numbers.
 type RestoreResult struct {
-	OldUserID       string
-	NewUserID       string
-	DevicesRebound  int64
-	SessionsDeleted int64
+	OldUserID         string
+	NewUserID         string
+	DevicesRebound    int64
+	SessionsDeleted   int64
+	DeviceHashesReset int64
 }
 
 // PerformRestore executes the account-restore transaction for the
@@ -123,6 +124,23 @@ func PerformRestore(db *gorm.DB, oldUserID, newUserID string, telegramUserID int
 		if err := tx.Delete(&model.User{}, "id = ?", newUserID).Error; err != nil {
 			return fmt.Errorf("restore: delete new user: %w", err)
 		}
+
+		// 6. Zero the device_secret_hash on every device still bound
+		//    to old_user. This is the "re-authenticate the physical
+		//    device" step — the user's reinstalled client has a new
+		//    secret in its private storage, and without clearing the
+		//    old hash, GuestLogin's secret mismatch check would keep
+		//    minting fresh users from the phone forever. Clearing
+		//    the hash puts the row into the legacy-grace state so
+		//    the first secret-bearing call from the phone populates
+		//    the hash and returns old_user's tokens cleanly.
+		hashRes := tx.Model(&model.Device{}).
+			Where("user_id = ? AND device_secret_hash <> ''", oldUserID).
+			Update("device_secret_hash", "")
+		if hashRes.Error != nil {
+			return fmt.Errorf("restore: clear device secrets: %w", hashRes.Error)
+		}
+		out.DeviceHashesReset = hashRes.RowsAffected
 
 		out.OldUserID = oldUserID
 		out.NewUserID = newUserID

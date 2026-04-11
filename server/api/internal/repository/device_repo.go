@@ -157,6 +157,39 @@ func FindDeviceByID(db *gorm.DB, id string) (*model.Device, error) {
 	return &device, nil
 }
 
+// ClearDeviceSecretHashesForUser zeros out the stored device_secret_hash
+// on every device row belonging to the given user. Intended for use
+// inside the Telegram recovery flow (ADR-006): after PerformRestore
+// merges a new guest's /auth/guest token into the existing linked
+// account, the next call from the user's physical device will have
+// a fresh secret that won't match whatever was stored before the
+// reinstall. Clearing the hash lets GuestLogin's legacy-grace path
+// re-populate it from the first secret-bearing call, re-binding
+// the device cleanly to the old account.
+//
+// Safe because:
+//   - it only runs after a successful PerformRestore, which already
+//     required proof of Telegram control
+//   - the legacy-grace path still requires the caller to know the
+//     device_id (not publicly leaked) and to supply a non-empty
+//     secret (empty-empty is denied)
+//   - the window between hash-clear and legitimate re-auth is
+//     typically seconds, limited by the user opening the app
+//
+// Returns the number of rows updated (0 on no-op).
+func ClearDeviceSecretHashesForUser(db *gorm.DB, userID string) (int64, error) {
+	if db == nil {
+		return 0, errNilDB
+	}
+	result := db.Model(&model.Device{}).
+		Where("user_id = ? AND device_secret_hash <> ''", userID).
+		Update("device_secret_hash", "")
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 // AdminDeleteDevice removes a device row by id with no ownership check.
 // The admin handler uses this when evicting a device from any user's
 // account (e.g. after a support request for a stolen phone). Returns
