@@ -54,8 +54,16 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   connect: async (server: Server, config: ServerConfig) => {
     let {connectionState, _connecting} = get();
 
-    // Block if already connecting, connected, or a connect call is in flight
-    if (_connecting || connectionState === 'connected' || connectionState === 'connecting') {
+    // Block if a connect() call is already in flight (re-entry guard)
+    // or the tunnel is already up. We deliberately do NOT block on
+    // connectionState === 'connecting' here: the useVpnConnection hook
+    // sets that state preemptively at the top of its own connect()
+    // flow to give the button immediate visual feedback while the
+    // server-config fetch and slot reservation are still running. If
+    // we blocked on 'connecting' the preemptive update would race
+    // itself and stall the whole flow. _connecting is still the
+    // authoritative re-entry flag.
+    if (_connecting || connectionState === 'connected') {
       console.log('[VPN Store] connect blocked: _connecting=', _connecting, 'state=', connectionState);
       return;
     }

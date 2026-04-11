@@ -436,6 +436,16 @@ export function useVpnConnection() {
     const server = selectedServer;
     if (!server) return;
 
+    // Flip the UI to 'connecting' immediately so the button turns
+    // yellow + shows the spinner the moment the user taps. Without
+    // this, the API prep work below (interstitial, slot release,
+    // config fetch, slot reservation) runs first and the button
+    // stays on the idle "Press to connect" text for ~500-1500ms,
+    // which feels like nothing happened. vpnStore.connect() no
+    // longer blocks on this state so the subsequent storeConnect
+    // call inside this function proceeds normally.
+    useVpnStore.setState({connectionState: 'connecting', error: null});
+
     // Show interstitial ad (free users, every Nth connect).
     // Awaits until dismissed, skipped, or times out — never blocks VPN.
     await maybeShowInterstitial();
