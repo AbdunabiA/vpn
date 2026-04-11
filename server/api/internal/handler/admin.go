@@ -446,3 +446,100 @@ func AdminGetStats(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		})
 	}
 }
+
+// AdminGetStatsTimeseries handles GET /admin/stats/timeseries.
+// Query params: days (default 30, max 180).
+// Returns per-day signup and connection counts, zero-padded so the
+// frontend never has to fill gaps. Backed by repository.GetTimeseries.
+func AdminGetStatsTimeseries(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		days, _ := strconv.Atoi(c.Query("days", "30"))
+		signups, connections, err := repository.GetTimeseries(db, days)
+		if err != nil {
+			logger.Error("admin: failed to get timeseries", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"data": fiber.Map{
+				"signups":     signups,
+				"connections": connections,
+			},
+		})
+	}
+}
+
+// AdminListUserDevices handles GET /admin/users/:id/devices.
+// Returns the list of devices bound to the given user, newest first.
+// Admins can view devices on any account (unlike the user-facing
+// /devices endpoint which is self-scoped).
+func AdminListUserDevices(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := c.Params("id")
+		if userID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "user id required",
+			})
+		}
+		// Cheap 404 so the panel shows "user not found" instead of an
+		// empty device list when the admin pastes a bad ID.
+		if _, err := repository.FindUserByIDAdmin(db, userID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "user not found",
+				})
+			}
+			logger.Error("admin: failed to lookup user for devices", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		devices, err := repository.ListDevicesByUser(db, userID)
+		if err != nil {
+			logger.Error("admin: failed to list user devices",
+				zap.String("user_id", userID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		return c.JSON(fiber.Map{"data": devices})
+	}
+}
+
+// AdminDeleteUserDevice handles DELETE /admin/users/:id/devices/:device_id.
+// Removes a single device row regardless of ownership (admin override).
+// The :id path parameter is included for URL symmetry and so that the
+// audit log (Phase B-4) can associate the action with a target user,
+// but the actual delete is keyed on :device_id alone.
+func AdminDeleteUserDevice(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		deviceRowID := c.Params("device_id")
+		if deviceRowID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "device id required",
+			})
+		}
+		if err := repository.AdminDeleteDevice(db, deviceRowID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "device not found",
+				})
+			}
+			logger.Error("admin: failed to delete device",
+				zap.String("device_row_id", deviceRowID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		logger.Info("admin: device removed",
+			zap.String("device_row_id", deviceRowID),
+			zap.String("target_user_id", c.Params("id")),
+		)
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+}

@@ -160,6 +160,9 @@ func main() {
 	admin.Patch("/servers/:id", handler.AdminUpdateServer(logger, db))
 	admin.Delete("/servers/:id", handler.AdminDeleteServer(logger, db))
 	admin.Get("/stats", handler.AdminGetStats(logger, db))
+	admin.Get("/stats/timeseries", handler.AdminGetStatsTimeseries(logger, db))
+	admin.Get("/users/:id/devices", handler.AdminListUserDevices(logger, db))
+	admin.Delete("/users/:id/devices/:device_id", handler.AdminDeleteUserDevice(logger, db))
 
 	// Start server
 	go func() {

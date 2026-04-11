@@ -142,6 +142,21 @@ func DeleteDeviceByOwner(db *gorm.DB, deviceRowID, ownerUserID string) error {
 	return nil
 }
 
+// AdminDeleteDevice removes a device row by id with no ownership check.
+// The admin handler uses this when evicting a device from any user's
+// account (e.g. after a support request for a stolen phone). Returns
+// ErrNotFound when no row matches the id.
+func AdminDeleteDevice(db *gorm.DB, deviceRowID string) error {
+	result := db.Where("id = ?", deviceRowID).Delete(&model.Device{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteStaleDevices removes devices whose last_seen_at is older than the
 // given cutoff. Called by the background scheduler to free quota slots
 // occupied by devices the user has stopped using (factory reset, lost

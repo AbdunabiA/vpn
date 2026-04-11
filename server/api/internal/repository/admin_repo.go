@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"vpnapp/server/api/internal/model"
 
@@ -159,6 +160,86 @@ func GetGlobalStats(db *gorm.DB) (map[string]interface{}, error) {
 		"server_count":         serverCount,
 		"active_server_count":  activeServerCount,
 	}, nil
+}
+
+// TimeseriesBucket is a single day in a dashboard timeseries. The date
+// is formatted as YYYY-MM-DD in UTC so the frontend can plot without
+// further parsing, and the count is whatever the caller asked for
+// (signups, connections, etc.).
+type TimeseriesBucket struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+// GetTimeseries returns per-day signup and connection counts for the
+// last `days` calendar days (UTC), padded with zero-count entries so
+// the frontend always receives a contiguous series. The fixed window
+// keeps query time bounded and the resulting JSON small.
+func GetTimeseries(db *gorm.DB, days int) (signups, connections []TimeseriesBucket, err error) {
+	if db == nil {
+		return nil, nil, errNilDB
+	}
+	if days <= 0 || days > 180 {
+		days = 30
+	}
+
+	// Build the zero-filled skeleton up front. We key by YYYY-MM-DD so
+	// that Postgres's date_trunc results slot straight in.
+	now := time.Now().UTC()
+	startDay := now.AddDate(0, 0, -(days - 1))
+	signupMap := make(map[string]int64, days)
+	connectMap := make(map[string]int64, days)
+	orderedDays := make([]string, 0, days)
+	for i := 0; i < days; i++ {
+		day := startDay.AddDate(0, 0, i).Format("2006-01-02")
+		signupMap[day] = 0
+		connectMap[day] = 0
+		orderedDays = append(orderedDays, day)
+	}
+
+	// Signups — users.created_at grouped by day.
+	type row struct {
+		Day   string
+		Count int64
+	}
+	var signupRows []row
+	if err := db.Model(&model.User{}).
+		Select("TO_CHAR(DATE_TRUNC('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day, COUNT(*) AS count").
+		Where("created_at >= ?", startDay).
+		Group("day").
+		Scan(&signupRows).Error; err != nil {
+		return nil, nil, fmt.Errorf("querying signups timeseries: %w", err)
+	}
+	for _, r := range signupRows {
+		if _, ok := signupMap[r.Day]; ok {
+			signupMap[r.Day] = r.Count
+		}
+	}
+
+	// Connections — count every connection row that started within the
+	// window, regardless of whether it's still active. This matches the
+	// "new connections per day" intuition the dashboard card will show.
+	var connectRows []row
+	if err := db.Model(&model.Connection{}).
+		Select("TO_CHAR(DATE_TRUNC('day', connected_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day, COUNT(*) AS count").
+		Where("connected_at >= ?", startDay).
+		Group("day").
+		Scan(&connectRows).Error; err != nil {
+		return nil, nil, fmt.Errorf("querying connections timeseries: %w", err)
+	}
+	for _, r := range connectRows {
+		if _, ok := connectMap[r.Day]; ok {
+			connectMap[r.Day] = r.Count
+		}
+	}
+
+	signups = make([]TimeseriesBucket, 0, days)
+	connections = make([]TimeseriesBucket, 0, days)
+	for _, day := range orderedDays {
+		signups = append(signups, TimeseriesBucket{Date: day, Count: signupMap[day]})
+		connections = append(connections, TimeseriesBucket{Date: day, Count: connectMap[day]})
+	}
+	return signups, connections, nil
 }
 
 // FindUserByIDAdmin looks up any user by UUID for admin use.
