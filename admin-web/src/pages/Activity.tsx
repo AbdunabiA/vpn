@@ -49,27 +49,29 @@ export function Activity() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Журнал</h1>
         <p className="text-sm text-muted-foreground">
-          Every mutating admin action is recorded here. Read-only; rows
-          never disappear once written.
+          Сюда записывается каждое изменяющее действие администратора.
+          Только для чтения; записи не удаляются после создания.
         </p>
       </div>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <div>{isLoading ? "Loading…" : `${total} total entries`}</div>
-        {isFetching && !isLoading && <div>Refreshing…</div>}
+        <div>
+          {isLoading ? "Загрузка…" : `всего записей: ${total}`}
+        </div>
+        {isFetching && !isLoading && <div>Обновление…</div>}
       </div>
 
       <div className="rounded-lg border border-border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[180px]">When</TableHead>
-              <TableHead className="w-[160px]">Action</TableHead>
-              <TableHead className="w-[120px]">Admin</TableHead>
-              <TableHead className="w-[120px]">Target</TableHead>
-              <TableHead>Details</TableHead>
+              <TableHead className="w-[180px]">Когда</TableHead>
+              <TableHead className="w-[160px]">Действие</TableHead>
+              <TableHead className="w-[120px]">Админ</TableHead>
+              <TableHead className="w-[120px]">Объект</TableHead>
+              <TableHead>Детали</TableHead>
               <TableHead className="w-[140px]">IP</TableHead>
             </TableRow>
           </TableHeader>
@@ -88,7 +90,7 @@ export function Activity() {
                   colSpan={6}
                   className="text-center text-sm text-muted-foreground"
                 >
-                  No activity yet. Mutations recorded here automatically.
+                  Записей пока нет. Изменения фиксируются здесь автоматически.
                 </TableCell>
               </TableRow>
             ) : (
@@ -100,14 +102,14 @@ export function Activity() {
 
       {isError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          Failed to load audit log: {(error as Error).message}
+          Не удалось загрузить журнал: {(error as Error).message}
         </div>
       )}
 
       {!isLoading && total > PAGE_SIZE && (
         <div className="flex items-center justify-between text-sm">
           <div className="text-muted-foreground">
-            Page {page} of {totalPages}
+            Страница {page} из {totalPages}
           </div>
           <div className="flex gap-2">
             <Button
@@ -117,7 +119,7 @@ export function Activity() {
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               <ChevronLeft className="size-4" />
-              Previous
+              Назад
             </Button>
             <Button
               variant="outline"
@@ -125,7 +127,7 @@ export function Activity() {
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
-              Next
+              Вперёд
               <ChevronRight className="size-4" />
             </Button>
           </div>

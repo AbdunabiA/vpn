@@ -16,11 +16,11 @@ import { shortId } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 
 const navItems = [
-  { to: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { to: "/users", label: "Users", Icon: Users },
-  { to: "/servers", label: "Servers", Icon: Server },
-  { to: "/activity", label: "Activity", Icon: Activity },
-  { to: "/settings", label: "Settings", Icon: Settings },
+  { to: "/dashboard", label: "Обзор", Icon: LayoutDashboard },
+  { to: "/users", label: "Пользователи", Icon: Users },
+  { to: "/servers", label: "Серверы", Icon: Server },
+  { to: "/activity", label: "Журнал", Icon: Activity },
+  { to: "/settings", label: "Настройки", Icon: Settings },
 ];
 
 export function AdminLayout() {
@@ -45,7 +45,9 @@ export function AdminLayout() {
       <aside className="flex w-60 flex-col border-r border-border bg-card">
         <div className="flex items-center gap-2 px-6 py-5">
           <ShieldCheck className="size-5 text-primary" />
-          <span className="text-sm font-semibold tracking-wide">VPN Admin</span>
+          <span className="text-sm font-semibold tracking-wide">
+            VPN — админка
+          </span>
         </div>
         <Separator />
         <nav className="flex-1 space-y-1 px-3 py-4">
@@ -72,7 +74,7 @@ export function AdminLayout() {
           <div className="truncate font-medium text-foreground">
             {user.full_name}
           </div>
-          <div className="truncate">id {shortId(user.id)}</div>
+          <div className="truncate">ID {shortId(user.id)}</div>
           <div className="capitalize">{user.role}</div>
         </div>
       </aside>
@@ -84,7 +86,7 @@ export function AdminLayout() {
           </div>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="size-4" />
-            Log out
+            Выйти
           </Button>
         </header>
         <main className="flex-1 overflow-auto p-6">

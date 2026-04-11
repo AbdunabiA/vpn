@@ -54,12 +54,12 @@ export function DevicesSection({ userID }: { userID: string }) {
       await qc.invalidateQueries({
         queryKey: ["admin", "user", userID, "devices"],
       });
-      toast.success("Device removed");
+      toast.success("Устройство удалено");
       setPendingDelete(null);
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
-      toast.error(axiosErr.response?.data?.error ?? "Delete failed");
+      toast.error(axiosErr.response?.data?.error ?? "Не удалось удалить");
     },
   });
 
@@ -70,10 +70,10 @@ export function DevicesSection({ userID }: { userID: string }) {
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <div className="flex items-center gap-2">
           <Smartphone className="size-4 text-muted-foreground" />
-          <CardTitle className="text-base">Devices</CardTitle>
+          <CardTitle className="text-base">Устройства</CardTitle>
         </div>
         <span className="text-xs text-muted-foreground">
-          {isLoading ? "…" : `${devices.length} bound`}
+          {isLoading ? "…" : `привязано: ${devices.length}`}
         </span>
       </CardHeader>
       <CardContent>
@@ -84,20 +84,20 @@ export function DevicesSection({ userID }: { userID: string }) {
           </div>
         ) : isError ? (
           <div className="text-sm text-destructive">
-            Failed to load devices: {(error as Error).message}
+            Не удалось загрузить устройства: {(error as Error).message}
           </div>
         ) : devices.length === 0 ? (
           <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            No devices bound to this user yet.
+            У этого пользователя пока нет привязанных устройств.
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[120px]">ID</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead className="w-[120px]">Platform</TableHead>
-                <TableHead className="w-[180px]">Last seen</TableHead>
+                <TableHead>Устройство</TableHead>
+                <TableHead className="w-[120px]">Платформа</TableHead>
+                <TableHead className="w-[180px]">Последняя активность</TableHead>
                 <TableHead className="w-[60px]" />
               </TableRow>
             </TableHeader>
@@ -109,7 +109,7 @@ export function DevicesSection({ userID }: { userID: string }) {
                   </TableCell>
                   <TableCell>
                     <div className="text-sm font-medium">
-                      {d.model || "Unknown"}
+                      {d.model || "Неизвестно"}
                     </div>
                     <div
                       className="max-w-[260px] truncate font-mono text-xs text-muted-foreground"
@@ -130,7 +130,7 @@ export function DevicesSection({ userID }: { userID: string }) {
                       size="icon"
                       onClick={() => setPendingDelete(d)}
                       disabled={deleteMutation.isPending}
-                      aria-label="Remove device"
+                      aria-label="Удалить устройство"
                     >
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
@@ -169,17 +169,18 @@ function ConfirmRemoveDialog({
     <Dialog open={!!device} onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Remove device?</DialogTitle>
+          <DialogTitle>Удалить устройство?</DialogTitle>
           <DialogDescription>
-            This frees the device slot on the user's plan. The device will
-            re-bind on the next guest login if the user still has the app
-            installed — this action is only permanent for lost or
-            compromised devices.
+            Освободится слот устройства в тарифе пользователя. Если
+            приложение всё ещё установлено, устройство автоматически
+            привяжется заново при следующем гостевом входе — действие
+            полностью надёжно только для потерянных или скомпрометированных
+            устройств.
           </DialogDescription>
         </DialogHeader>
         {device && (
           <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
-            <div className="font-medium">{device.model || "Unknown"}</div>
+            <div className="font-medium">{device.model || "Неизвестно"}</div>
             <div className="font-mono text-xs text-muted-foreground">
               {device.device_id}
             </div>
@@ -193,7 +194,7 @@ function ConfirmRemoveDialog({
             onClick={onCancel}
             disabled={busy}
           >
-            Cancel
+            Отмена
           </Button>
           <Button
             variant="destructive"
@@ -202,7 +203,7 @@ function ConfirmRemoveDialog({
             onClick={onConfirm}
             disabled={busy}
           >
-            Remove
+            Удалить
           </Button>
         </DialogFooter>
       </DialogContent>

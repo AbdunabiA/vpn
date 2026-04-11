@@ -61,9 +61,9 @@ import {
 // three purchase tiers we document on the landing page; the custom dialog
 // handles everything else.
 const PRESET_DAYS: { label: string; days: number }[] = [
-  { label: "+30 days", days: 30 },
-  { label: "+90 days", days: 90 },
-  { label: "+365 days", days: 365 },
+  { label: "+30 дней", days: 30 },
+  { label: "+90 дней", days: 90 },
+  { label: "+365 дней", days: 365 },
 ];
 
 // Clamp extend_days client-side. Server has no cap (flagged in architect
@@ -99,7 +99,7 @@ export function UserDetail() {
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
-      toast.error(axiosErr.response?.data?.error ?? "Update failed");
+      toast.error(axiosErr.response?.data?.error ?? "Не удалось обновить");
     },
   });
 
@@ -120,11 +120,12 @@ export function UserDetail() {
       <div className="space-y-4">
         <Button variant="ghost" size="sm" onClick={() => navigate("/users")}>
           <ArrowLeft className="size-4" />
-          Back to users
+          К списку пользователей
         </Button>
         <Card className="border-destructive/40 bg-destructive/10">
           <CardContent className="p-4 text-sm text-destructive">
-            Failed to load user: {(error as Error)?.message ?? "not found"}
+            Не удалось загрузить пользователя:{" "}
+            {(error as Error)?.message ?? "не найден"}
           </CardContent>
         </Card>
       </div>
@@ -134,9 +135,9 @@ export function UserDetail() {
   async function copyId() {
     try {
       await navigator.clipboard.writeText(user!.id);
-      toast.success("User ID copied");
+      toast.success("ID скопирован");
     } catch {
-      toast.error("Copy failed");
+      toast.error("Не удалось скопировать");
     }
   }
 
@@ -162,7 +163,7 @@ export function UserDetail() {
           className="-ml-2"
         >
           <ArrowLeft className="size-4" />
-          Back to users
+          К списку пользователей
         </Button>
       </div>
 
@@ -172,7 +173,7 @@ export function UserDetail() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-2">
               <CardTitle className="text-xl">
-                {user.full_name || "Unnamed user"}
+                {user.full_name || "Без имени"}
               </CardTitle>
               <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
                 <span>{user.id}</span>
@@ -180,7 +181,7 @@ export function UserDetail() {
                   type="button"
                   onClick={copyId}
                   className="rounded p-1 hover:bg-accent"
-                  aria-label="Copy user ID"
+                  aria-label="Скопировать ID пользователя"
                 >
                   <Copy className="size-3.5" />
                 </button>
@@ -207,33 +208,36 @@ export function UserDetail() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Device limit" value={`${tierDeviceLimit(user.subscription_tier)} device(s)`} />
           <Stat
-            label="Expires"
+            label="Лимит устройств"
+            value={`${tierDeviceLimit(user.subscription_tier)} шт.`}
+          />
+          <Stat
+            label="Истекает"
             value={formatDate(user.subscription_expires_at)}
             highlight={!!user.subscription_expires_at}
           />
-          <Stat label="Created" value={formatDate(user.created_at)} />
-          <Stat label="Role" value={user.role} />
+          <Stat label="Создан" value={formatDate(user.created_at)} />
+          <Stat label="Роль" value={user.role} />
         </CardContent>
       </Card>
 
       {/* Action bar ------------------------------------------------------- */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Subscription actions</CardTitle>
+          <CardTitle className="text-base">Действия с подпиской</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <TierActionMenu
             tier="premium"
-            label="Upgrade to Premium"
+            label="Активировать Premium"
             busy={busy}
             onSelect={(days) => applyUpgrade("premium", days)}
             currentTier={user.subscription_tier}
           />
           <TierActionMenu
             tier="ultimate"
-            label="Upgrade to Ultimate"
+            label="Активировать Ultimate"
             busy={busy}
             onSelect={(days) => applyUpgrade("ultimate", days)}
             currentTier={user.subscription_tier}
@@ -245,7 +249,7 @@ export function UserDetail() {
             onClick={applyDowngrade}
           >
             <ArrowDown className="size-4" />
-            Downgrade to Free
+            Понизить до бесплатного
           </Button>
           <Separator orientation="vertical" className="mx-1 h-8" />
           <Button
@@ -255,7 +259,7 @@ export function UserDetail() {
             onClick={() => setCustomOpen(true)}
           >
             <Calendar className="size-4" />
-            Custom expiration…
+            Своя дата окончания…
           </Button>
         </CardContent>
       </Card>
@@ -342,7 +346,9 @@ function TierActionMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuLabel>
-          {isCurrent ? `Extend ${tierLabel(tier)}` : `Activate ${tierLabel(tier)}`}
+          {isCurrent
+            ? `Продлить ${tierLabel(tier)}`
+            : `Активировать ${tierLabel(tier)}`}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {PRESET_DAYS.map((p) => (
@@ -388,17 +394,17 @@ function CustomExpirationDialog({
 
   function handleApply() {
     if (!date) {
-      setError("Please pick a date");
+      setError("Выберите дату");
       return;
     }
     const parsed = new Date(`${date}T23:59:59.000Z`);
     if (Number.isNaN(parsed.getTime())) {
-      setError("Invalid date");
+      setError("Некорректная дата");
       return;
     }
     const deltaDays = Math.ceil((parsed.getTime() - Date.now()) / 86_400_000);
     if (deltaDays > MAX_EXTEND_DAYS) {
-      setError(`Maximum extension is ${MAX_EXTEND_DAYS / 365} years`);
+      setError(`Максимальное продление — ${MAX_EXTEND_DAYS / 365} лет`);
       return;
     }
     setError(null);
@@ -414,14 +420,14 @@ function CustomExpirationDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Set custom expiration</DialogTitle>
+          <DialogTitle>Своя дата окончания</DialogTitle>
           <DialogDescription>
-            Pick the exact day the subscription should expire (UTC).
-            Clearing the date removes the expiration entirely.
+            Выберите точный день, когда подписка должна истечь (UTC).
+            Если очистить дату, срок действия будет снят полностью.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
-          <Label htmlFor="expiration-date">Expires on</Label>
+          <Label htmlFor="expiration-date">Истекает</Label>
           <Input
             id="expiration-date"
             type="date"
@@ -444,7 +450,7 @@ function CustomExpirationDialog({
             onClick={handleClear}
             disabled={busy}
           >
-            Clear expiration
+            Снять срок
           </Button>
           <div className="flex-1" />
           <Button
@@ -454,10 +460,10 @@ function CustomExpirationDialog({
             onClick={() => onOpenChange(false)}
             disabled={busy}
           >
-            Cancel
+            Отмена
           </Button>
           <Button size="sm" type="button" onClick={handleApply} disabled={busy}>
-            Apply
+            Применить
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -480,19 +486,19 @@ function toDateInputValue(d: Date): string {
 
 // describeUpdate renders a human-readable toast message from the mutation
 // input so the admin gets an unambiguous confirmation of what they just
-// did ("Extended Ultimate by 90 days"), not a generic "updated".
+// did ("Продлён Ultimate +90 дней"), not a generic "обновлено".
 function describeUpdate(input: UpdateUserInput): string {
   if (input.subscription_tier === "free") {
-    return "Downgraded to Free";
+    return "Понижен до бесплатного";
   }
   if (input.subscription_tier && input.extend_days) {
-    return `Activated ${tierLabel(input.subscription_tier)} +${input.extend_days} days`;
+    return `Активирован ${tierLabel(input.subscription_tier)} +${input.extend_days} дней`;
   }
   if (input.subscription_expires_at === "") {
-    return "Expiration cleared";
+    return "Срок действия снят";
   }
   if (input.subscription_expires_at) {
-    return `Expiration set to ${new Date(input.subscription_expires_at).toLocaleDateString()}`;
+    return `Дата окончания: ${new Date(input.subscription_expires_at).toLocaleDateString("ru-RU")}`;
   }
-  return "User updated";
+  return "Пользователь обновлён";
 }

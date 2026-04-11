@@ -24,7 +24,7 @@ const Settings = lazy(() =>
 function LazyFallback() {
   return (
     <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-      Loading…
+      Загрузка…
     </div>
   );
 }

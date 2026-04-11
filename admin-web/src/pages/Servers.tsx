@@ -46,11 +46,13 @@ export function Servers() {
     onSuccess: async (_data, vars) => {
       await qc.invalidateQueries({ queryKey: ["admin", "servers"] });
       await qc.invalidateQueries({ queryKey: ["admin", "stats"] });
-      toast.success(vars.isActive ? "Server activated" : "Server deactivated");
+      toast.success(
+        vars.isActive ? "Сервер активирован" : "Сервер деактивирован",
+      );
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
-      toast.error(axiosErr.response?.data?.error ?? "Update failed");
+      toast.error(axiosErr.response?.data?.error ?? "Не удалось обновить");
     },
   });
 
@@ -59,12 +61,12 @@ export function Servers() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["admin", "servers"] });
       await qc.invalidateQueries({ queryKey: ["admin", "stats"] });
-      toast.success("Server deactivated (soft-deleted)");
+      toast.success("Сервер деактивирован (мягкое удаление)");
       setPendingDelete(null);
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
-      toast.error(axiosErr.response?.data?.error ?? "Delete failed");
+      toast.error(axiosErr.response?.data?.error ?? "Не удалось удалить");
     },
   });
 
@@ -74,10 +76,10 @@ export function Servers() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Servers</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Серверы</h1>
         <p className="text-sm text-muted-foreground">
-          VPN endpoint list. Toggle active state to pull a server out of
-          rotation without losing its configuration.
+          Список VPN-серверов. Переключайте активность, чтобы временно
+          вывести сервер из ротации без потери конфигурации.
         </p>
       </div>
 
@@ -85,12 +87,12 @@ export function Servers() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Host</TableHead>
-              <TableHead className="w-[180px]">Location</TableHead>
-              <TableHead className="w-[140px]">Protocol</TableHead>
-              <TableHead className="w-[100px]">Load</TableHead>
-              <TableHead className="w-[100px]">State</TableHead>
-              <TableHead className="w-[180px]">Created</TableHead>
+              <TableHead>Хост</TableHead>
+              <TableHead className="w-[180px]">Локация</TableHead>
+              <TableHead className="w-[140px]">Протокол</TableHead>
+              <TableHead className="w-[100px]">Нагрузка</TableHead>
+              <TableHead className="w-[100px]">Статус</TableHead>
+              <TableHead className="w-[180px]">Создан</TableHead>
               <TableHead className="w-[120px]" />
             </TableRow>
           </TableHeader>
@@ -109,7 +111,7 @@ export function Servers() {
                   colSpan={7}
                   className="text-center text-sm text-muted-foreground"
                 >
-                  No servers configured.
+                  Нет настроенных серверов.
                 </TableCell>
               </TableRow>
             ) : (
@@ -131,7 +133,7 @@ export function Servers() {
 
       {isError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          Failed to load servers: {(error as Error).message}
+          Не удалось загрузить серверы: {(error as Error).message}
         </div>
       )}
 
@@ -141,12 +143,12 @@ export function Servers() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Deactivate server?</DialogTitle>
+            <DialogTitle>Деактивировать сервер?</DialogTitle>
             <DialogDescription>
-              This is a soft delete — the row stays in the database with
-              is_active=false. You can toggle it back on at any time from
-              this page. Connected clients will drop once the current
-              load drains.
+              Это мягкое удаление — строка остаётся в базе с
+              is_active=false. Вы можете снова включить сервер в любой
+              момент на этой странице. Подключённые клиенты отвалятся
+              после того, как текущая нагрузка сойдёт на нет.
             </DialogDescription>
           </DialogHeader>
           {pendingDelete && (
@@ -166,7 +168,7 @@ export function Servers() {
               onClick={() => setPendingDelete(null)}
               disabled={busy}
             >
-              Cancel
+              Отмена
             </Button>
             <Button
               variant="destructive"
@@ -177,7 +179,7 @@ export function Servers() {
                 pendingDelete && deleteMutation.mutate(pendingDelete.id)
               }
             >
-              Deactivate
+              Деактивировать
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -251,7 +253,7 @@ function ServerRow({
               : "bg-muted text-muted-foreground ring-1 ring-inset ring-border",
           )}
         >
-          {server.is_active ? "Active" : "Inactive"}
+          {server.is_active ? "Активен" : "Неактивен"}
         </span>
       </TableCell>
       <TableCell className="text-muted-foreground">
@@ -264,8 +266,8 @@ function ServerRow({
             size="icon"
             onClick={onToggle}
             disabled={busy}
-            aria-label={server.is_active ? "Deactivate" : "Activate"}
-            title={server.is_active ? "Deactivate" : "Activate"}
+            aria-label={server.is_active ? "Деактивировать" : "Активировать"}
+            title={server.is_active ? "Деактивировать" : "Активировать"}
           >
             {server.is_active ? (
               <PowerOff className="size-4" />
@@ -280,7 +282,7 @@ function ServerRow({
             disabled={busy || !server.is_active}
             className="text-destructive hover:text-destructive"
           >
-            Delete
+            Удалить
           </Button>
         </div>
       </TableCell>

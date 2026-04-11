@@ -29,14 +29,14 @@ interface KpiDef {
 // for Phase B-1. Charts and per-day timeseries arrive in B-3 once the
 // backend /admin/stats/timeseries endpoint lands.
 const kpis: KpiDef[] = [
-  { key: "total_users", label: "Total users", Icon: Users },
+  { key: "total_users", label: "Всего пользователей", Icon: Users },
   {
     key: "active_subscriptions",
-    label: "Active subscriptions",
+    label: "Активные подписки",
     Icon: CreditCard,
   },
-  { key: "active_server_count", label: "Active servers", Icon: Activity },
-  { key: "server_count", label: "Total servers", Icon: Server },
+  { key: "active_server_count", label: "Активные серверы", Icon: Activity },
+  { key: "server_count", label: "Всего серверов", Icon: Server },
 ];
 
 export function Dashboard() {
@@ -49,9 +49,9 @@ export function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Обзор</h1>
         <p className="text-sm text-muted-foreground">
-          Live snapshot of users, subscriptions and VPN servers.
+          Актуальная сводка по пользователям, подпискам и VPN-серверам.
         </p>
       </div>
 
@@ -76,7 +76,7 @@ export function Dashboard() {
       {isError && (
         <Card className="border-destructive/40 bg-destructive/10">
           <CardContent className="p-4 text-sm text-destructive">
-            Failed to load stats: {(error as Error).message}
+            Не удалось загрузить статистику: {(error as Error).message}
           </CardContent>
         </Card>
       )}

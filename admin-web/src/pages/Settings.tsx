@@ -33,14 +33,14 @@ export function Settings() {
     mutationFn: (input: { current: string; next: string }) =>
       changeAdminPassword(input.current, input.next),
     onSuccess: () => {
-      toast.success("Password updated");
+      toast.success("Пароль обновлён");
       setCurrent("");
       setNext("");
       setConfirm("");
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
-      toast.error(axiosErr.response?.data?.error ?? "Password change failed");
+      toast.error(axiosErr.response?.data?.error ?? "Не удалось изменить пароль");
     },
   });
 
@@ -48,19 +48,19 @@ export function Settings() {
     e.preventDefault();
     setLocalError(null);
     if (next.length < 8) {
-      setLocalError("New password must be at least 8 characters");
+      setLocalError("Новый пароль должен быть не короче 8 символов");
       return;
     }
     if (next.length > 72) {
-      setLocalError("New password must be at most 72 characters");
+      setLocalError("Новый пароль должен быть не длиннее 72 символов");
       return;
     }
     if (next !== confirm) {
-      setLocalError("New password and confirmation do not match");
+      setLocalError("Новый пароль и подтверждение не совпадают");
       return;
     }
     if (next === current) {
-      setLocalError("New password must differ from the current one");
+      setLocalError("Новый пароль должен отличаться от текущего");
       return;
     }
     mutation.mutate({ current, next });
@@ -74,9 +74,9 @@ export function Settings() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Настройки</h1>
         <p className="text-sm text-muted-foreground">
-          Manage your admin account.
+          Управление учётной записью администратора.
         </p>
       </div>
 
@@ -84,14 +84,14 @@ export function Settings() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <User className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Account</CardTitle>
+            <CardTitle className="text-base">Учётная запись</CardTitle>
           </div>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <Row label="Name" value={user?.full_name ?? "—"} />
-          <Row label="User ID" value={user?.id ?? "—"} mono />
-          <Row label="Role" value={user?.role ?? "—"} />
-          <Row label="Tier" value={user?.subscription_tier ?? "—"} />
+          <Row label="Имя" value={user?.full_name ?? "—"} />
+          <Row label="ID пользователя" value={user?.id ?? "—"} mono />
+          <Row label="Роль" value={user?.role ?? "—"} />
+          <Row label="Тариф" value={user?.subscription_tier ?? "—"} />
         </CardContent>
       </Card>
 
@@ -99,19 +99,19 @@ export function Settings() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <KeyRound className="size-4 text-muted-foreground" />
-            <CardTitle className="text-base">Change password</CardTitle>
+            <CardTitle className="text-base">Смена пароля</CardTitle>
           </div>
           <CardDescription>
-            Pick something long (8–72 characters). If you are still using
-            the seed password from first provisioning, rotate it now. Other
-            active sessions stay alive until their refresh token expires —
-            this is a deliberate choice, not a bug.
+            Выберите длинный пароль (8–72 символа). Если вы всё ещё
+            используете первоначальный пароль, смените его сейчас. Другие
+            активные сессии продолжат работать до истечения их
+            refresh-токена — это намеренное поведение, а не баг.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4 max-w-sm" onSubmit={handleSubmit}>
             <div className="space-y-2">
-              <Label htmlFor="current-password">Current password</Label>
+              <Label htmlFor="current-password">Текущий пароль</Label>
               <Input
                 id="current-password"
                 type="password"
@@ -123,7 +123,7 @@ export function Settings() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="new-password">New password</Label>
+              <Label htmlFor="new-password">Новый пароль</Label>
               <Input
                 id="new-password"
                 type="password"
@@ -137,7 +137,7 @@ export function Settings() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirm-password">Confirm new password</Label>
+              <Label htmlFor="confirm-password">Подтверждение пароля</Label>
               <Input
                 id="confirm-password"
                 type="password"
@@ -152,7 +152,7 @@ export function Settings() {
               <div className="text-xs text-destructive">{localError}</div>
             )}
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? "Updating…" : "Update password"}
+              {mutation.isPending ? "Сохранение…" : "Обновить пароль"}
             </Button>
           </form>
         </CardContent>
@@ -160,17 +160,17 @@ export function Settings() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Session</CardTitle>
+          <CardTitle className="text-base">Сессия</CardTitle>
         </CardHeader>
         <CardContent>
           <Button variant="outline" size="sm" onClick={handleLogout}>
             <LogOut className="size-4" />
-            Sign out of this browser
+            Выйти из этого браузера
           </Button>
           <Separator className="my-4" />
           <p className="text-xs text-muted-foreground">
-            Signing out clears the tokens stored in this browser only. Other
-            active sessions continue until their refresh token expires.
+            Выход очищает токены только в этом браузере. Другие активные
+            сессии продолжат работать до истечения их refresh-токена.
           </p>
         </CardContent>
       </Card>

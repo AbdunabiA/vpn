@@ -43,7 +43,7 @@ export function Login() {
         // Unwrap the backend's {error: "..."} shape when present, otherwise
         // fall back to a generic string so the admin always sees something.
         (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Login failed";
+          ?.error ?? "Не удалось войти";
       toast.error(message);
     } finally {
       setSubmitting(false);
@@ -56,10 +56,11 @@ export function Login() {
         <CardHeader className="space-y-3">
           <div className="flex items-center gap-2">
             <ShieldCheck className="size-5 text-primary" />
-            <CardTitle className="text-lg">VPN Admin</CardTitle>
+            <CardTitle className="text-lg">VPN — админка</CardTitle>
           </div>
           <CardDescription>
-            Sign in with your admin account to manage users and servers.
+            Войдите под учётной записью администратора, чтобы управлять
+            пользователями и серверами.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -78,7 +79,7 @@ export function Login() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">Пароль</Label>
               <Input
                 id="password"
                 type="password"
@@ -90,7 +91,7 @@ export function Login() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "Signing in…" : "Sign in"}
+              {submitting ? "Вход…" : "Войти"}
             </Button>
           </form>
         </CardContent>

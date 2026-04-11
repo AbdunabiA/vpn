@@ -58,10 +58,10 @@ export function Users() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Пользователи</h1>
         <p className="text-sm text-muted-foreground">
-          Find a user by ID (paste the UUID from Telegram) to activate or
-          extend their subscription.
+          Найдите пользователя по ID (вставьте UUID из Telegram), чтобы
+          активировать или продлить его подписку.
         </p>
       </div>
 
@@ -71,13 +71,13 @@ export function Users() {
           <Input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search by user ID (paste from Telegram)"
+            placeholder="Поиск по ID пользователя (вставьте из Telegram)"
             className="pl-8"
             autoFocus
           />
         </div>
         <div className="text-xs text-muted-foreground">
-          {isFetching && !isLoading ? "Updating…" : `${total} total`}
+          {isFetching && !isLoading ? "Обновление…" : `всего: ${total}`}
         </div>
       </div>
 
@@ -86,11 +86,11 @@ export function Users() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[120px]">ID</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead className="w-[120px]">Tier</TableHead>
-              <TableHead className="w-[100px]">Role</TableHead>
-              <TableHead className="w-[180px]">Expires</TableHead>
-              <TableHead className="w-[180px]">Created</TableHead>
+              <TableHead>Имя</TableHead>
+              <TableHead className="w-[120px]">Тариф</TableHead>
+              <TableHead className="w-[100px]">Роль</TableHead>
+              <TableHead className="w-[180px]">Истекает</TableHead>
+              <TableHead className="w-[180px]">Создан</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -111,8 +111,8 @@ export function Users() {
                   className="text-center text-sm text-muted-foreground"
                 >
                   {search
-                    ? `No users match “${search}”`
-                    : "No users yet. They appear here after their first guest login."}
+                    ? `Нет пользователей по запросу «${search}»`
+                    : "Пока нет пользователей. Они появятся здесь после первого гостевого входа."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -130,14 +130,14 @@ export function Users() {
 
       {isError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          Failed to load users: {(error as Error).message}
+          Не удалось загрузить пользователей: {(error as Error).message}
         </div>
       )}
 
       {!isLoading && total > PAGE_SIZE && (
         <div className="flex items-center justify-between text-sm">
           <div className="text-muted-foreground">
-            Page {pagination?.page ?? 1} of {totalPages}
+            Страница {pagination?.page ?? 1} из {totalPages}
           </div>
           <div className="flex gap-2">
             <Button
@@ -147,7 +147,7 @@ export function Users() {
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               <ChevronLeft className="size-4" />
-              Previous
+              Назад
             </Button>
             <Button
               variant="outline"
@@ -155,7 +155,7 @@ export function Users() {
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
-              Next
+              Вперёд
               <ChevronRight className="size-4" />
             </Button>
           </div>
@@ -191,6 +191,8 @@ function UserRow({
         {shortId(user.id)}
       </TableCell>
       <TableCell className="font-medium">{user.full_name || "—"}</TableCell>
+      {/* Tier column renders product brand names in English; role
+          column capitalizes the role string as-is. */}
       <TableCell>
         <span
           className={cn(

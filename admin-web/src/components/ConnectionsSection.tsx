@@ -34,10 +34,10 @@ export function ConnectionsSection({ userID }: { userID: string }) {
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <div className="flex items-center gap-2">
           <Radio className="size-4 text-muted-foreground" />
-          <CardTitle className="text-base">Connection history</CardTitle>
+          <CardTitle className="text-base">История подключений</CardTitle>
         </div>
         <span className="text-xs text-muted-foreground">
-          {isLoading ? "…" : `last ${conns.length}`}
+          {isLoading ? "…" : `последних: ${conns.length}`}
         </span>
       </CardHeader>
       <CardContent>
@@ -49,21 +49,21 @@ export function ConnectionsSection({ userID }: { userID: string }) {
           </div>
         ) : isError ? (
           <div className="text-sm text-destructive">
-            Failed to load history: {(error as Error).message}
+            Не удалось загрузить историю: {(error as Error).message}
           </div>
         ) : conns.length === 0 ? (
           <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            No connection history yet.
+            История подключений пока пуста.
           </div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[180px]">Connected</TableHead>
-                <TableHead className="w-[180px]">Disconnected</TableHead>
-                <TableHead className="w-[120px]">Status</TableHead>
-                <TableHead className="w-[120px]">Server</TableHead>
-                <TableHead className="text-right">Traffic</TableHead>
+                <TableHead className="w-[180px]">Подключился</TableHead>
+                <TableHead className="w-[180px]">Отключился</TableHead>
+                <TableHead className="w-[120px]">Статус</TableHead>
+                <TableHead className="w-[120px]">Сервер</TableHead>
+                <TableHead className="text-right">Трафик</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

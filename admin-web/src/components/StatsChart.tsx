@@ -46,14 +46,14 @@ export function StatsChart() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Last 30 days</CardTitle>
+        <CardTitle className="text-base">Последние 30 дней</CardTitle>
       </CardHeader>
       <CardContent>
         {isLoading ? (
           <Skeleton className="h-[260px] w-full" />
         ) : isError ? (
           <div className="flex h-[260px] items-center justify-center text-sm text-destructive">
-            Failed to load timeseries: {(error as Error).message}
+            Не удалось загрузить график: {(error as Error).message}
           </div>
         ) : (
           <div className="h-[260px] w-full">
@@ -101,7 +101,7 @@ export function StatsChart() {
                 <Area
                   type="monotone"
                   dataKey="signups"
-                  name="New users"
+                  name="Новые пользователи"
                   stroke="#38bdf8"
                   fill="url(#sig)"
                   strokeWidth={2}
@@ -109,7 +109,7 @@ export function StatsChart() {
                 <Area
                   type="monotone"
                   dataKey="connections"
-                  name="Connections"
+                  name="Подключения"
                   stroke="#a78bfa"
                   fill="url(#con)"
                   strokeWidth={2}
@@ -119,8 +119,8 @@ export function StatsChart() {
           </div>
         )}
         <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-          <LegendDot color="#38bdf8" label="New users" />
-          <LegendDot color="#a78bfa" label="Connections" />
+          <LegendDot color="#38bdf8" label="Новые пользователи" />
+          <LegendDot color="#a78bfa" label="Подключения" />
         </div>
       </CardContent>
     </Card>

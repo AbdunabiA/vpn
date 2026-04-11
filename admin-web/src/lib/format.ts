@@ -5,7 +5,11 @@ export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
+  // Explicit ru-RU locale so the admin panel always shows Russian
+  // month abbreviations regardless of the browser's default. The admin
+  // reads Russian and the whole UI is localised to ru, so there's no
+  // reason to honour navigator language here.
+  return d.toLocaleString("ru-RU", {
     year: "numeric",
     month: "short",
     day: "2-digit",
@@ -22,5 +26,7 @@ export function shortId(id: string): string {
 
 export function formatNumber(n: number | null | undefined): string {
   if (n == null) return "—";
-  return new Intl.NumberFormat().format(n);
+  // ru-RU uses a non-breaking space as the thousands separator, which
+  // is the expected rendering in Russian-language interfaces.
+  return new Intl.NumberFormat("ru-RU").format(n);
 }

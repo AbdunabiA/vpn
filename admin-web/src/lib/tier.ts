@@ -9,10 +9,15 @@ export type Role = AdminUser["role"];
 
 export const TIER_OPTIONS: Tier[] = ["free", "premium", "ultimate"];
 
+// Tier labels mix Russian and English intentionally:
+// "Premium" and "Ultimate" are product brand names we keep in English
+// for consistency with the mobile app and Stripe product catalog.
+// "Free" becomes "Бесплатный" in Russian because it's a common word,
+// not a brand.
 export function tierLabel(tier: Tier): string {
   switch (tier) {
     case "free":
-      return "Free";
+      return "Бесплатный";
     case "premium":
       return "Premium";
     case "ultimate":
