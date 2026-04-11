@@ -9,10 +9,14 @@ export interface AdminUser {
   subscription_tier: "free" | "premium" | "ultimate";
   subscription_expires_at: string | null;
   role: "user" | "admin";
-  // ADR-006 Telegram recovery binding. Both nullable — users who
-  // haven't linked Telegram just have both as null.
+  // ADR-006 Telegram recovery binding. All four nullable — users
+  // who haven't linked Telegram just have everything as null.
+  // Profile fields are cached from Telegram at link time; pre-016
+  // linked rows have telegram_user_id set but profile fields null.
   telegram_user_id: number | null;
   telegram_linked_at: string | null;
+  telegram_username: string | null;
+  telegram_first_name: string | null;
   created_at: string;
 }
 

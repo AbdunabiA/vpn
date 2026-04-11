@@ -22,6 +22,14 @@ type User struct {
 	Role                  string     `json:"role" gorm:"type:varchar(20);default:user"`
 	TelegramUserID        *int64     `json:"telegram_user_id" gorm:"column:telegram_user_id;uniqueIndex"`
 	TelegramLinkedAt      *time.Time `json:"telegram_linked_at" gorm:"column:telegram_linked_at"`
+	// Cached from Telegram's Update.Message.From at link time so the
+	// mobile app and admin panel can render a human identity without
+	// a live API round-trip. TelegramUsername is nullable because
+	// not every user has set a public @username. TelegramFirstName
+	// is always populated per Telegram's contract, but kept as a
+	// pointer to preserve backwards-compat with pre-016 rows.
+	TelegramUsername      *string    `json:"telegram_username" gorm:"column:telegram_username"`
+	TelegramFirstName     *string    `json:"telegram_first_name" gorm:"column:telegram_first_name"`
 	CreatedAt             time.Time  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt             time.Time  `json:"-" gorm:"autoUpdateTime"`
 }

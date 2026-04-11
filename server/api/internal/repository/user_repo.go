@@ -151,9 +151,11 @@ func FindUserByTelegramID(db *gorm.DB, telegramUserID int64) (*model.User, error
 }
 
 // LinkTelegramAccount binds a Telegram numeric user ID to the given
-// VPN user. Sets telegram_linked_at to NOW(). Called from the bot's
-// /start link_<jwt> handler after the token signature and purpose
-// have been validated.
+// VPN user. Sets telegram_linked_at to NOW() and caches the sender's
+// @username + first_name so the UI can display a human identity
+// without a live Telegram API round-trip. Called from the bot's
+// /start link_<token> handler after the token has been consumed
+// from Redis and the purpose has been verified.
 //
 // Re-linking (changing telegram_user_id on a user that already has
 // one) is explicitly allowed — the mobile Account screen exposes an
@@ -162,9 +164,14 @@ func FindUserByTelegramID(db *gorm.DB, telegramUserID int64) (*model.User, error
 // first) is rejected to force the user through the UI flow and
 // avoid silent account takeovers if a link token leaks.
 //
+// `username` and `firstName` may be empty strings if Telegram
+// didn't supply them. Empty strings are stored as SQL NULLs so
+// the mobile UI can distinguish "no username set" from "empty
+// username string" via its nullability check.
+//
 // Returns ErrNotFound when userID does not exist, ErrDuplicate when
 // the telegram ID is already bound to a different user.
-func LinkTelegramAccount(db *gorm.DB, userID string, telegramUserID int64) error {
+func LinkTelegramAccount(db *gorm.DB, userID string, telegramUserID int64, username, firstName string) error {
 	if db == nil {
 		return errNilDB
 	}
@@ -185,13 +192,27 @@ func LinkTelegramAccount(db *gorm.DB, userID string, telegramUserID int64) error
 		return ErrDuplicate
 	}
 
-	now := gorm.Expr("NOW()")
+	updates := map[string]interface{}{
+		"telegram_user_id":   telegramUserID,
+		"telegram_linked_at": gorm.Expr("NOW()"),
+	}
+	// Nullable fields — persist nil when the source string is empty
+	// so the UI can render a clean "no username set" state rather
+	// than an ugly empty string.
+	if username != "" {
+		updates["telegram_username"] = username
+	} else {
+		updates["telegram_username"] = nil
+	}
+	if firstName != "" {
+		updates["telegram_first_name"] = firstName
+	} else {
+		updates["telegram_first_name"] = nil
+	}
+
 	result := db.Model(&model.User{}).
 		Where("id = ?", userID).
-		Updates(map[string]interface{}{
-			"telegram_user_id":   telegramUserID,
-			"telegram_linked_at": now,
-		})
+		Updates(updates)
 	if result.Error != nil {
 		if isDuplicateError(result.Error) {
 			return ErrDuplicate
@@ -204,9 +225,10 @@ func LinkTelegramAccount(db *gorm.DB, userID string, telegramUserID int64) error
 	return nil
 }
 
-// UnlinkTelegramAccount clears the Telegram binding on a user.
-// Idempotent — unlinking a never-linked user returns nil without
-// error so the mobile app can call it without checking state first.
+// UnlinkTelegramAccount clears the Telegram binding on a user,
+// including the cached profile fields. Idempotent — unlinking a
+// never-linked user returns nil without error so the mobile app
+// can call it without checking state first.
 func UnlinkTelegramAccount(db *gorm.DB, userID string) error {
 	if db == nil {
 		return errNilDB
@@ -214,8 +236,10 @@ func UnlinkTelegramAccount(db *gorm.DB, userID string) error {
 	result := db.Model(&model.User{}).
 		Where("id = ?", userID).
 		Updates(map[string]interface{}{
-			"telegram_user_id":   nil,
-			"telegram_linked_at": nil,
+			"telegram_user_id":    nil,
+			"telegram_linked_at":  nil,
+			"telegram_username":   nil,
+			"telegram_first_name": nil,
 		})
 	if result.Error != nil {
 		return result.Error

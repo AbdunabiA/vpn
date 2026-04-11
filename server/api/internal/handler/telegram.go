@@ -132,8 +132,10 @@ func TelegramStatus(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		linked := user.TelegramUserID != nil
 		return c.JSON(fiber.Map{
 			"data": fiber.Map{
-				"linked":    linked,
-				"linked_at": user.TelegramLinkedAt,
+				"linked":              linked,
+				"linked_at":           user.TelegramLinkedAt,
+				"telegram_username":   user.TelegramUsername,
+				"telegram_first_name": user.TelegramFirstName,
 			},
 		})
 	}

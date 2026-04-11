@@ -210,7 +210,13 @@ func (r *Recovery) handleLink(ctx context.Context, msg *tgbotapi.Message, token 
 		r.reply(msg.Chat.ID, "❌ Неверный тип ссылки.")
 		return
 	}
-	if err := repository.LinkTelegramAccount(r.db, payload.Subject, msg.From.ID); err != nil {
+	if err := repository.LinkTelegramAccount(
+		r.db,
+		payload.Subject,
+		msg.From.ID,
+		msg.From.UserName,
+		msg.From.FirstName,
+	); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			r.reply(msg.Chat.ID, "❌ Аккаунт VPN не найден. Попробуйте войти в приложение заново.")
 			return

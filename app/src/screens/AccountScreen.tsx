@@ -502,6 +502,12 @@ export function AccountScreen() {
             benefit is real for paid tiers but doesn't hurt free users. */}
         <TelegramRecoveryCard />
 
+        {/* Support ID card — surfaces the full user_id so users can
+            paste it into Telegram support if something breaks. Both
+            the selectable Text (native long-press copy) and the
+            Share button let the user hand the id off without typing. */}
+        {user?.id && <SupportIdCard userId={user.id} />}
+
         {/* Logout */}
         <TouchableOpacity
           style={styles.logoutButton}
@@ -511,6 +517,46 @@ export function AccountScreen() {
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// SupportIdCard surfaces the full VPN user_id so users can copy it
+// into a support chat if something breaks. Uses two escape hatches:
+//   1. <Text selectable> — native long-press copy on both platforms
+//   2. A Share button — opens the OS share sheet with a prefilled
+//      "My ID: <uuid>" message for quick handoff to @flawlssr.
+function SupportIdCard({userId}: {userId: string}) {
+  const {t} = useTranslation();
+
+  async function handleShare() {
+    try {
+      await Share.share({
+        message: t('support.shareMessage', {id: userId}),
+      });
+    } catch {
+      // User cancelled or share sheet unavailable — silent failure
+      // is fine, the selectable text is still copy-able.
+    }
+  }
+
+  return (
+    <View style={styles.supportCard}>
+      <Text style={styles.supportTitle}>{t('support.sectionTitle')}</Text>
+      <Text style={styles.supportDescription}>
+        {t('support.description')}
+      </Text>
+      <Text selectable style={styles.supportIdValue}>
+        {userId}
+      </Text>
+      <TouchableOpacity
+        style={styles.supportShareButton}
+        onPress={handleShare}
+        accessibilityRole="button">
+        <Text style={styles.supportShareText}>
+          {t('support.shareButton')}
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -551,11 +597,30 @@ function TelegramRecoveryCard() {
     );
   }
 
+  // identityLabel picks the most user-recognisable string to
+  // display next to the "Linked" badge. @username wins when set
+  // (public, stable), otherwise first_name (Telegram always
+  // provides this for a valid Update.From). Falls back to null
+  // for pre-016 rows that have neither cached.
+  const identityLabel = status?.linked
+    ? status.telegram_username
+      ? t('telegram.linkedAsUsername', {username: status.telegram_username})
+      : status.telegram_first_name
+      ? t('telegram.linkedAs', {name: status.telegram_first_name})
+      : null
+    : null;
+
   return (
     <View style={styles.telegramCard}>
       <Text style={styles.telegramTitle}>{t('telegram.sectionTitle')}</Text>
+      {/* Description copy swaps based on state: before linking we
+          explain the benefit, after linking we confirm it's active.
+          Avoids the old awkward "link your telegram" text showing
+          while the user is already linked. */}
       <Text style={styles.telegramDescription}>
-        {t('telegram.description')}
+        {status?.linked
+          ? t('telegram.linkedDescription')
+          : t('telegram.description')}
       </Text>
       {status?.linked ? (
         <View style={styles.telegramLinkedRow}>
@@ -564,15 +629,16 @@ function TelegramRecoveryCard() {
               {t('telegram.linkedBadge')}
             </Text>
           </View>
-          {status.linked_at && (
-            <Text style={styles.telegramLinkedAt}>
-              {t('telegram.linkedAt', {
-                date: formatDate(status.linked_at),
-              })}
-            </Text>
+          {identityLabel && (
+            <Text style={styles.telegramLinkedIdentity}>{identityLabel}</Text>
           )}
         </View>
       ) : null}
+      {status?.linked && status.linked_at && (
+        <Text style={styles.telegramLinkedAt}>
+          {t('telegram.linkedAt', {date: formatDate(status.linked_at)})}
+        </Text>
+      )}
       {status?.linked ? (
         <TouchableOpacity
           style={[styles.telegramButton, styles.telegramUnlinkButton]}
@@ -965,6 +1031,12 @@ const styles = StyleSheet.create({
   telegramLinkedAt: {
     ...typography.caption,
     color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  telegramLinkedIdentity: {
+    ...typography.body,
+    color: colors.textPrimary,
+    flexShrink: 1,
   },
   telegramButton: {
     paddingVertical: spacing.md,
@@ -1015,6 +1087,52 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
   },
   telegramRestoreText: {
+    ...typography.bodyBold,
+    color: colors.primary,
+  },
+
+  // Support ID card — same visual language as the other cards on
+  // this screen. The id value is rendered in a monospace box so it
+  // looks obviously-copy-able, with a Share button as a fallback
+  // for users who don't know about long-press-to-copy.
+  supportCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.md,
+  },
+  supportTitle: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  supportDescription: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  supportIdValue: {
+    ...typography.caption,
+    fontFamily: 'Courier',
+    color: colors.textPrimary,
+    backgroundColor: colors.background,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.md,
+  },
+  supportShareButton: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: 'transparent',
+  },
+  supportShareText: {
     ...typography.bodyBold,
     color: colors.primary,
   },

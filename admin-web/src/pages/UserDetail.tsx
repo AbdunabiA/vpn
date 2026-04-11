@@ -233,10 +233,20 @@ export function UserDetail() {
         <CardContent className="text-sm">
           {user.telegram_user_id ? (
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center rounded-md bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-300 ring-1 ring-inset ring-sky-500/30">
                   Привязан
                 </span>
+                {/* Prefer @username when present (public, stable,
+                    recognisable) over first_name. Fall back to just
+                    the tg_id for pre-016 linked rows. */}
+                {user.telegram_username ? (
+                  <span className="text-sm">
+                    @{user.telegram_username}
+                  </span>
+                ) : user.telegram_first_name ? (
+                  <span className="text-sm">{user.telegram_first_name}</span>
+                ) : null}
                 <span className="font-mono text-xs text-muted-foreground">
                   tg_id {user.telegram_user_id}
                 </span>

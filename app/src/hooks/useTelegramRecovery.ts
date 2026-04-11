@@ -10,6 +10,11 @@ import {useAuthStore} from '../stores/authStore';
 export interface TelegramStatus {
   linked: boolean;
   linked_at: string | null;
+  // Cached from Telegram at link time — nullable because not every
+  // user has a public @username, and pre-016 linked rows have both
+  // fields as NULL until they unlink and relink.
+  telegram_username: string | null;
+  telegram_first_name: string | null;
 }
 
 // Shape of the /auth/telegram/{link,restore}-intent response. The

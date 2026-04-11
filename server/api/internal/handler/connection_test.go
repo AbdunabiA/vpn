@@ -80,6 +80,8 @@ func newHandlerTestDB(t *testing.T) *gorm.DB {
 			role                    TEXT NOT NULL DEFAULT 'user',
 			telegram_user_id        INTEGER UNIQUE,
 			telegram_linked_at      DATETIME,
+			telegram_username       TEXT,
+			telegram_first_name     TEXT,
 			created_at              DATETIME,
 			updated_at              DATETIME
 		);

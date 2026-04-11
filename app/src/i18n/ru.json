@@ -72,7 +72,10 @@
   "telegram": {
     "sectionTitle": "Восстановление через Telegram",
     "description": "Привяжите Telegram, чтобы восстановить подписку на любом новом устройстве (iPhone, Android, после сброса).",
+    "linkedDescription": "Если вы потеряете доступ или смените устройство, ваша подписка восстановится через этот Telegram.",
     "linkedBadge": "Привязан",
+    "linkedAs": "Как {{name}}",
+    "linkedAsUsername": "@{{username}}",
     "linkedAt": "Привязан {{date}}",
     "linkButton": "Привязать Telegram",
     "linkInProgress": "Открываю Telegram…",
@@ -88,6 +91,12 @@
     "linkFailed": "Не удалось привязать Telegram. Попробуйте ещё раз.",
     "restoreFailed": "Не удалось начать восстановление. Попробуйте ещё раз.",
     "unlinkFailed": "Не удалось отвязать. Попробуйте ещё раз."
+  },
+  "support": {
+    "sectionTitle": "Ваш ID",
+    "description": "Если что-то не работает — напишите в поддержку и пришлите этот ID. Нажмите и удерживайте, чтобы скопировать.",
+    "shareButton": "Поделиться",
+    "shareMessage": "Мой ID: {{id}}"
   },
   "payment": {
     "title": "Выберите план",
