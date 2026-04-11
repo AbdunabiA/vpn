@@ -16,6 +16,12 @@ import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useAuthStore} from '../stores/authStore';
 import {useLayout} from '../hooks/useLayout';
+import {
+  useTelegramLinkMutation,
+  useTelegramRestoreMutation,
+  useTelegramStatus,
+  useTelegramUnlinkMutation,
+} from '../hooks/useTelegramRecovery';
 import api from '../services/api';
 import {getDeviceFingerprint} from '../services/deviceFingerprint';
 import {colors, typography, spacing, borderRadius} from '../theme';
@@ -492,6 +498,10 @@ export function AccountScreen() {
           </View>
         </View>
 
+        {/* Telegram recovery binding (ADR-006). Shown to everyone; the
+            benefit is real for paid tiers but doesn't hurt free users. */}
+        <TelegramRecoveryCard />
+
         {/* Logout */}
         <TouchableOpacity
           style={styles.logoutButton}
@@ -501,6 +511,128 @@ export function AccountScreen() {
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// TelegramRecoveryCard is the Account screen's binding UI. Shows the
+// current status (linked/linked_at/tg id hidden for privacy) and a
+// Link button when unlinked or an Unlink button when linked. The
+// heavy lifting happens in the useTelegramRecovery hook — this
+// component only renders state and wires callbacks.
+function TelegramRecoveryCard() {
+  const {t} = useTranslation();
+  const {data: status, isLoading} = useTelegramStatus();
+  const linkMutation = useTelegramLinkMutation();
+  const unlinkMutation = useTelegramUnlinkMutation();
+  const restoreMutation = useTelegramRestoreMutation();
+
+  const busy =
+    linkMutation.isPending ||
+    unlinkMutation.isPending ||
+    restoreMutation.isPending ||
+    isLoading;
+
+  function handleLink() {
+    linkMutation.mutate();
+  }
+
+  function handleUnlink() {
+    Alert.alert(
+      t('telegram.unlinkConfirmTitle'),
+      t('telegram.unlinkConfirmBody'),
+      [
+        {text: t('common.cancel'), style: 'cancel'},
+        {
+          text: t('telegram.unlinkConfirmYes'),
+          style: 'destructive',
+          onPress: () => unlinkMutation.mutate(),
+        },
+      ],
+    );
+  }
+
+  return (
+    <View style={styles.telegramCard}>
+      <Text style={styles.telegramTitle}>{t('telegram.sectionTitle')}</Text>
+      <Text style={styles.telegramDescription}>
+        {t('telegram.description')}
+      </Text>
+      {status?.linked ? (
+        <View style={styles.telegramLinkedRow}>
+          <View style={styles.telegramBadge}>
+            <Text style={styles.telegramBadgeText}>
+              {t('telegram.linkedBadge')}
+            </Text>
+          </View>
+          {status.linked_at && (
+            <Text style={styles.telegramLinkedAt}>
+              {t('telegram.linkedAt', {
+                date: formatDate(status.linked_at),
+              })}
+            </Text>
+          )}
+        </View>
+      ) : null}
+      {status?.linked ? (
+        <TouchableOpacity
+          style={[styles.telegramButton, styles.telegramUnlinkButton]}
+          onPress={handleUnlink}
+          disabled={busy}
+          accessibilityRole="button">
+          {unlinkMutation.isPending ? (
+            <ActivityIndicator color={colors.error} size="small" />
+          ) : (
+            <Text style={styles.telegramUnlinkText}>
+              {t('telegram.unlinkButton')}
+            </Text>
+          )}
+        </TouchableOpacity>
+      ) : (
+        <View>
+          <TouchableOpacity
+            style={[styles.telegramButton, styles.telegramLinkButton]}
+            onPress={handleLink}
+            disabled={busy}
+            accessibilityRole="button">
+            {linkMutation.isPending ? (
+              <ActivityIndicator color={colors.textPrimary} size="small" />
+            ) : (
+              <Text style={styles.telegramLinkText}>
+                {t('telegram.linkButton')}
+              </Text>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.telegramHint}>{t('telegram.linkHint')}</Text>
+
+          {/* Restore option for users who had a linked account on a
+              previous device. Clearly separated from the primary
+              "Link" action so new users don't get confused — the
+              restore flow is for reinstall/factory-reset/platform-
+              switch scenarios only. */}
+          <View style={styles.telegramRestoreSection}>
+            <Text style={styles.telegramRestoreTitle}>
+              {t('telegram.restoreTitle')}
+            </Text>
+            <Text style={styles.telegramRestoreBody}>
+              {t('telegram.restoreBody')}
+            </Text>
+            <TouchableOpacity
+              style={[styles.telegramButton, styles.telegramRestoreButton]}
+              onPress={() => restoreMutation.mutate()}
+              disabled={busy}
+              accessibilityRole="button">
+              {restoreMutation.isPending ? (
+                <ActivityIndicator color={colors.primary} size="small" />
+              ) : (
+                <Text style={styles.telegramRestoreText}>
+                  {t('telegram.restoreButton')}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -791,5 +923,99 @@ const styles = StyleSheet.create({
   logoutText: {
     ...typography.bodyBold,
     color: colors.error,
+  },
+
+  // Telegram recovery card (ADR-006). Same visual language as the
+  // other cards on this screen — surface background, rounded corners,
+  // subtle border.
+  telegramCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: spacing.md,
+  },
+  telegramTitle: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  telegramDescription: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  telegramLinkedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  telegramBadge: {
+    backgroundColor: colors.primaryDark,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    marginRight: spacing.sm,
+  },
+  telegramBadgeText: {
+    ...typography.captionBold,
+    color: colors.textPrimary,
+  },
+  telegramLinkedAt: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  telegramButton: {
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+  },
+  telegramLinkButton: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  telegramLinkText: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+  },
+  telegramUnlinkButton: {
+    backgroundColor: 'transparent',
+    borderColor: colors.error,
+  },
+  telegramUnlinkText: {
+    ...typography.bodyBold,
+    color: colors.error,
+  },
+  telegramHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  telegramRestoreSection: {
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  telegramRestoreTitle: {
+    ...typography.bodyBold,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  telegramRestoreBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  telegramRestoreButton: {
+    backgroundColor: 'transparent',
+    borderColor: colors.primary,
+  },
+  telegramRestoreText: {
+    ...typography.bodyBold,
+    color: colors.primary,
   },
 });

@@ -69,6 +69,26 @@
     "namePlaceholder": "Ваше полное имя",
     "nameRequired": "Имя должно содержать минимум 2 символа"
   },
+  "telegram": {
+    "sectionTitle": "Восстановление через Telegram",
+    "description": "Привяжите Telegram, чтобы восстановить подписку на любом новом устройстве (iPhone, Android, после сброса).",
+    "linkedBadge": "Привязан",
+    "linkedAt": "Привязан {{date}}",
+    "linkButton": "Привязать Telegram",
+    "linkInProgress": "Открываю Telegram…",
+    "linkHint": "Откроется @risevp_bot — нажмите Start, чтобы подтвердить.",
+    "unlinkButton": "Отвязать",
+    "unlinkConfirmTitle": "Отвязать Telegram?",
+    "unlinkConfirmBody": "После отвязки вы не сможете восстановить подписку на новом устройстве, пока не привяжете снова.",
+    "unlinkConfirmYes": "Отвязать",
+    "restoreTitle": "Восстановить подписку",
+    "restoreBody": "Уже оплачивали? Восстановите доступ через Telegram.",
+    "restoreButton": "Восстановить через Telegram",
+    "openFailed": "Не удалось открыть Telegram. Установите приложение и попробуйте снова.",
+    "linkFailed": "Не удалось привязать Telegram. Попробуйте ещё раз.",
+    "restoreFailed": "Не удалось начать восстановление. Попробуйте ещё раз.",
+    "unlinkFailed": "Не удалось отвязать. Попробуйте ещё раз."
+  },
   "payment": {
     "title": "Выберите план",
     "subtitle": "Получите полную защиту с премиум-подпиской",

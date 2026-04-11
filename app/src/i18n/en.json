@@ -69,6 +69,26 @@
     "namePlaceholder": "Your full name",
     "nameRequired": "Name must be at least 2 characters"
   },
+  "telegram": {
+    "sectionTitle": "Telegram Recovery",
+    "description": "Link your Telegram account so you can restore your subscription on any new device (iPhone, Android, factory reset).",
+    "linkedBadge": "Linked",
+    "linkedAt": "Linked {{date}}",
+    "linkButton": "Link Telegram",
+    "linkInProgress": "Opening Telegram…",
+    "linkHint": "You'll be sent to @risevp_bot — tap Start to confirm.",
+    "unlinkButton": "Unlink",
+    "unlinkConfirmTitle": "Unlink Telegram?",
+    "unlinkConfirmBody": "After unlinking, you won't be able to restore this subscription on a new device unless you link again.",
+    "unlinkConfirmYes": "Unlink",
+    "restoreTitle": "Restore subscription",
+    "restoreBody": "Already have a paid plan? Restore it via Telegram.",
+    "restoreButton": "Restore via Telegram",
+    "openFailed": "Couldn't open Telegram. Install the Telegram app and try again.",
+    "linkFailed": "Couldn't link Telegram. Please try again.",
+    "restoreFailed": "Couldn't start the restore flow. Please try again.",
+    "unlinkFailed": "Couldn't unlink. Please try again."
+  },
   "payment": {
     "title": "Choose a Plan",
     "subtitle": "Unlock full protection with a premium plan",
