@@ -64,8 +64,13 @@ func main() {
 
 	// Global middleware
 	app.Use(recover.New())
+	// CORS is pinned to the admin panel origin now that it lives on its
+	// own subdomain. The mobile client is a React Native app and does
+	// not send an Origin header, so it is unaffected by this allow-list.
+	// If a second admin origin is added later (e.g. a staging domain),
+	// comma-separate it here — Fiber supports multiple exact origins.
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
+		AllowOrigins: "https://vpnadmin.mydayai.uz",
 		AllowHeaders: "Origin, Content-Type, Authorization, X-App-Version",
 	}))
 

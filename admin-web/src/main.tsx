@@ -23,9 +23,9 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      {/* basename mirrors vite.config.ts `base: "/admin/"` so router links
-          and nginx's location block agree on the URL prefix. */}
-      <BrowserRouter basename="/admin">
+      {/* The panel lives at the root of https://vpnadmin.mydayai.uz so
+          no basename is needed — router paths match URL paths 1:1. */}
+      <BrowserRouter>
         <App />
       </BrowserRouter>
       <Toaster richColors position="top-right" theme="dark" />

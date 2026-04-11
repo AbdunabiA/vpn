@@ -11,19 +11,21 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // The admin panel is deployed under https://vpnapi.mydayai.uz:9443/admin/
-  // so all static asset paths must be rewritten with that prefix. Vite's
-  // `base` flag handles both the emitted HTML and the manifest.
-  base: "/admin/",
+  // The admin panel lives at the root of https://vpnadmin.mydayai.uz.
+  // No URL prefix means assets resolve straight from /assets/, keeping
+  // the index.html and asset tree portable if the subdomain ever
+  // changes again.
+  base: "/",
   build: {
     outDir: "dist",
     sourcemap: false,
   },
   server: {
     port: 5173,
-    // Local dev proxies /api/v1 to the production API by default so you
-    // can iterate against real data; override with VITE_API_URL when you
-    // want to point at a local backend.
+    // Local dev proxies /api/v1 to the production API by default so
+    // the dev server can iterate against real data. Override with
+    // VITE_API_URL when running a local backend — the axios client
+    // picks that up at build time, bypassing the proxy entirely.
     proxy: {
       "/api/v1": {
         target: "https://vpnapi.mydayai.uz:9443",

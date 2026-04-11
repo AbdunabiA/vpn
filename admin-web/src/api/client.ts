@@ -6,11 +6,15 @@ import axios, {
 
 import { authSelectors, type AuthTokens } from "@/stores/authStore";
 
-// The production build is served from https://vpnapi.mydayai.uz:9443/admin/
-// and the API lives at /api/v1 on the same origin, so an empty baseURL with
-// a leading-slash path works for both dev (via the Vite proxy) and prod.
-// VITE_API_URL can override for local-backend iterations.
-const baseURL = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+// Production: the panel at https://vpnadmin.mydayai.uz talks cross-origin
+// to https://vpnapi.mydayai.uz:9443 — CORS is pinned to the admin origin
+// on the server side. The absolute URL is baked in at build time via
+// VITE_API_URL; the empty-string fallback keeps `npm run dev` working
+// against Vite's proxy (vite.config.ts), which forwards /api/v1 to the
+// same production host over HTTPS.
+const baseURL =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  "https://vpnapi.mydayai.uz:9443";
 
 export const api = axios.create({
   baseURL,

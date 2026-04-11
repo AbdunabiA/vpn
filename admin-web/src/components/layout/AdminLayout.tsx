@@ -80,7 +80,7 @@ export function AdminLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center justify-between border-b border-border px-6">
           <div className="text-sm text-muted-foreground">
-            https://vpnapi.mydayai.uz:9443
+            vpnadmin.mydayai.uz
           </div>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="size-4" />
