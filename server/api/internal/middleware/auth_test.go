@@ -76,8 +76,11 @@ func protectedApp(redisClient *redis.Client) *fiber.App {
 			return c.Status(fiber.StatusInternalServerError).SendString("internal error")
 		},
 	})
+	// Tests pass nil for db to keep the existing behaviour (no user-
+	// exists check). The new user-exists branch is exercised
+	// separately once its own test helper for a test DB exists.
 	app.Get("/protected",
-		middleware.AuthRequired(testSecret, redisClient),
+		middleware.AuthRequired(testSecret, redisClient, nil),
 		func(c *fiber.Ctx) error {
 			return c.JSON(fiber.Map{
 				"user_id": c.Locals("user_id"),
@@ -180,7 +183,7 @@ func TestAuthRequired_LocalsPopulated(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/protected",
-		middleware.AuthRequired(testSecret, nil),
+		middleware.AuthRequired(testSecret, nil, nil),
 		func(c *fiber.Ctx) error {
 			capturedID, _ = c.Locals("user_id").(string)
 			capturedTier, _ = c.Locals("tier").(string)

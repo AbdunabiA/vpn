@@ -146,7 +146,7 @@ func main() {
 	})
 
 	// Protected routes (JWT required)
-	authMiddleware := middleware.AuthRequired(cfg.JWTSecret, redisClient)
+	authMiddleware := middleware.AuthRequired(cfg.JWTSecret, redisClient, db)
 	protected := api.Group("", authMiddleware)
 	protected.Get("/servers", handler.ListServers(logger, db))
 	protected.Get("/servers/:id/config", handler.GetServerConfig(logger, db, cfg))
