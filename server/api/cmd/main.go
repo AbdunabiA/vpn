@@ -65,12 +65,19 @@ func main() {
 	// Global middleware
 	app.Use(recover.New())
 	// CORS is pinned to the admin panel origin now that it lives on its
-	// own subdomain. The mobile client is a React Native app and does
-	// not send an Origin header, so it is unaffected by this allow-list.
-	// If a second admin origin is added later (e.g. a staging domain),
-	// comma-separate it here — Fiber supports multiple exact origins.
+	// own subdomain. The port is load-bearing: browsers include :9443 in
+	// the Origin header because 9443 is a non-default HTTPS port, and
+	// Fiber does exact string matching against this list. Omitting the
+	// port silently breaks preflight (no access-control-allow-origin
+	// header in the response, which the browser blocks without a clear
+	// error in the network tab).
+	//
+	// The mobile client is a React Native app and does not send an
+	// Origin header, so it is unaffected by this allow-list. If a second
+	// admin origin is added later (e.g. a staging domain), comma-separate
+	// it here — Fiber supports multiple exact origins.
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "https://vpnadmin.mydayai.uz",
+		AllowOrigins: "https://vpnadmin.mydayai.uz:9443",
 		AllowHeaders: "Origin, Content-Type, Authorization, X-App-Version",
 	}))
 
