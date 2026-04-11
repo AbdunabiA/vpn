@@ -50,6 +50,8 @@ func newAuthTestDB(t *testing.T) *gorm.DB {
 			subscription_tier       TEXT NOT NULL DEFAULT 'free',
 			subscription_expires_at DATETIME,
 			role                    TEXT NOT NULL DEFAULT 'user',
+			telegram_user_id        INTEGER UNIQUE,
+			telegram_linked_at      DATETIME,
 			created_at              DATETIME,
 			updated_at              DATETIME
 		)`,

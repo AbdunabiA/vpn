@@ -1,6 +1,6 @@
 # ADR-006: Telegram-based account recovery
 
-**Status:** Proposed (design only, not yet implemented)
+**Status:** Accepted — Phase TG-1 in progress
 **Date:** 2026-04-11
 **Author:** Нео + Claude
 **Supersedes:** none
@@ -77,7 +77,7 @@ Both columns are nullable and independent of any existing auth
 columns. This is additive — the guest-only flow continues to work
 unchanged for users who never opt in.
 
-### New bot — `@vpn_mydayai_recovery_bot` (working name)
+### New bot — `@risevp_bot`
 
 A dedicated Telegram bot, not `@flawlssr` (which is a personal
 account, not a bot, and not an API client). The bot:
@@ -129,7 +129,7 @@ brute-force a UUID.
    восстановления аккаунта" with a single button.
 3. Tapping it calls `POST /auth/telegram/link-intent` on the backend.
 4. Backend generates a `tg_link` JWT for the caller's user_id and
-   returns `{url: "https://t.me/vpn_mydayai_recovery_bot?start=link_<jwt>"}`.
+   returns `{url: "https://t.me/risevp_bot?start=link_<jwt>"}`.
 5. App opens the URL via `Linking.openURL`. Telegram opens, shows the
    bot, the user taps "Start" (localised).
 6. Bot receives `/start link_<jwt>`, validates signature + purpose +
@@ -344,20 +344,23 @@ Telegram wins on effort × reliability × matches-existing-workflow.
      "После оплаты привяжите ваш Telegram через приложение, чтобы
      не потерять подписку при смене устройства."
 
-## Open questions (for user review)
+## Decisions (resolved via TG answers, 2026-04-11)
 
-1. **Bot name** — prefer `@vpn_mydayai_recovery_bot`, or something
-   shorter? Telegram bot usernames are first-come first-served;
-   register early.
-2. **UNIQUE constraint on telegram_user_id** — acceptable for MVP
-   or do we want to support multi-account-per-Telegram from day one?
-3. **Do we want the admin to be notified in Telegram when a
-   restore happens?** Cheap to add — bot sends `@flawlssr` a DM
-   with the details. Good audit-in-realtime.
-4. **What should the bot say when a user sends unrelated messages
-   (chat, stickers, voice)?** Default: the help text. Alternative:
-   silent ignore. Default is friendlier.
-5. **Should we let a user re-link to a different Telegram?** Today
-   the UI would show "already linked to TG id X" and not offer a
-   new link. A destructive "Отвязать" button is trivial to add but
-   potentially a footgun.
+1. **Bot name**: `@risevp_bot`. User will register via `@BotFather`
+   and hand over the token for deployment.
+2. **UNIQUE on telegram_user_id**: keep for MVP. The share-code flow
+   already handles the multi-device case — the Telegram-linked
+   account is conceptually the *owner*, and other devices redeem
+   share codes to join the plan without needing their own recovery
+   link. Revisit if users ever complain.
+3. **Admin notification on restore**: yes. The bot DMs `@flawlssr`
+   on every successful `tg_restore` with user_id, telegram_id, and
+   timestamp. Gives real-time audit visibility without the admin
+   having to open the panel.
+4. **Unrelated messages**: silent ignore. The bot only responds to
+   `/start`, `/help`, `/status`, and the link/restore deep-link
+   payloads. Stickers, voice, photos, unrelated text — no reply.
+5. **Re-linking to a different Telegram**: allowed. The mobile app
+   will show an "Отвязать" button next to the linked status; after
+   unlinking the user can link a new Telegram account. A new audit
+   action `tg_relink` records the change.

@@ -27,6 +27,14 @@ type Config struct {
 	StaleConnectionAfter time.Duration // marks connections without heartbeat as stale
 	StaleDeviceAfter     time.Duration // auto-removes idle device rows
 	LinkCodeTTL          time.Duration // share-code lifetime before expiry
+
+	// Telegram recovery bot (ADR-006). All three fields are optional —
+	// the bot goroutine only starts when RecoveryBotToken is non-empty,
+	// and the admin notification on restore is skipped when
+	// TelegramAdminChatID is zero.
+	RecoveryBotToken    string // @BotFather token for the recovery bot
+	RecoveryBotUsername string // without leading @, used in deep links
+	TelegramAdminChatID int64  // where to DM on tg_restore events
 }
 
 // Load reads configuration from environment variables.
@@ -51,6 +59,10 @@ func Load() (*Config, error) {
 		StaleConnectionAfter: getEnvDuration("STALE_CONNECTION_AFTER", 3*time.Minute),
 		StaleDeviceAfter:     getEnvDuration("STALE_DEVICE_AFTER", 30*24*time.Hour),
 		LinkCodeTTL:          getEnvDuration("LINK_CODE_TTL", 5*time.Minute),
+
+		RecoveryBotToken:    getEnv("TELEGRAM_RECOVERY_BOT_TOKEN", ""),
+		RecoveryBotUsername: getEnv("TELEGRAM_RECOVERY_BOT_USERNAME", "risevp_bot"),
+		TelegramAdminChatID: getEnvInt64("TELEGRAM_ADMIN_CHAT_ID", 0),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -83,4 +95,18 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// getEnvInt64 parses a signed 64-bit integer from the environment.
+// Returns fallback when the var is missing or unparseable.
+func getEnvInt64(key string, fallback int64) int64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
 }

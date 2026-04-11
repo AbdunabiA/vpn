@@ -128,6 +128,120 @@ func DeleteOrphanGuestUser(db *gorm.DB, userID string) error {
 	return nil
 }
 
+// FindUserByTelegramID looks up a user by their bound Telegram
+// numeric user ID. Used by the recovery bot to find which VPN
+// account belongs to the Telegram user sending /start restore_<jwt>.
+//
+// Returns ErrNotFound when no user has that telegram_user_id bound,
+// which the bot treats as "this Telegram account has no VPN account
+// to recover — please link from the old device first".
+func FindUserByTelegramID(db *gorm.DB, telegramUserID int64) (*model.User, error) {
+	if db == nil {
+		return nil, errNilDB
+	}
+	var user model.User
+	result := db.Where("telegram_user_id = ?", telegramUserID).First(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, result.Error
+	}
+	return &user, nil
+}
+
+// LinkTelegramAccount binds a Telegram numeric user ID to the given
+// VPN user. Sets telegram_linked_at to NOW(). Called from the bot's
+// /start link_<jwt> handler after the token signature and purpose
+// have been validated.
+//
+// Re-linking (changing telegram_user_id on a user that already has
+// one) is explicitly allowed — the mobile Account screen exposes an
+// "Отвязать" button that clears the binding, after which the user
+// can link a new Telegram. A direct overwrite (without unlinking
+// first) is rejected to force the user through the UI flow and
+// avoid silent account takeovers if a link token leaks.
+//
+// Returns ErrNotFound when userID does not exist, ErrDuplicate when
+// the telegram ID is already bound to a different user.
+func LinkTelegramAccount(db *gorm.DB, userID string, telegramUserID int64) error {
+	if db == nil {
+		return errNilDB
+	}
+	// Reject overwrite: if the user already has a binding, the
+	// caller must unlink first. Silent overwrite would let a stolen
+	// link token rebind somebody's account to an attacker's
+	// Telegram without any trace in the audit log.
+	var existing model.User
+	if err := db.Select("id, telegram_user_id").
+		Where("id = ?", userID).
+		First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if existing.TelegramUserID != nil && *existing.TelegramUserID != telegramUserID {
+		return ErrDuplicate
+	}
+
+	now := gorm.Expr("NOW()")
+	result := db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"telegram_user_id":   telegramUserID,
+			"telegram_linked_at": now,
+		})
+	if result.Error != nil {
+		if isDuplicateError(result.Error) {
+			return ErrDuplicate
+		}
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UnlinkTelegramAccount clears the Telegram binding on a user.
+// Idempotent — unlinking a never-linked user returns nil without
+// error so the mobile app can call it without checking state first.
+func UnlinkTelegramAccount(db *gorm.DB, userID string) error {
+	if db == nil {
+		return errNilDB
+	}
+	result := db.Model(&model.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"telegram_user_id":   nil,
+			"telegram_linked_at": nil,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CountTelegramLinkedUsers returns how many users currently have a
+// Telegram recovery binding. Used by the admin panel analytics card
+// ("X% of premium users have linked Telegram").
+func CountTelegramLinkedUsers(db *gorm.DB) (int64, error) {
+	if db == nil {
+		return 0, errNilDB
+	}
+	var count int64
+	if err := db.Model(&model.User{}).
+		Where("telegram_user_id IS NOT NULL").
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // UpdateUserName sets the full_name on the users row identified by id.
 func UpdateUserName(db *gorm.DB, userID, fullName string) error {
 	result := db.Model(&model.User{}).

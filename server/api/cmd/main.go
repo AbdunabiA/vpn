@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"vpnapp/server/api/internal/bot"
 	"vpnapp/server/api/internal/cache"
 	"vpnapp/server/api/internal/config"
 	"vpnapp/server/api/internal/handler"
@@ -162,6 +164,18 @@ func main() {
 	protected.Get("/devices", handler.ListMyDevices(logger, db))
 	protected.Delete("/devices/:id", handler.DeleteMyDevice(logger, db))
 
+	// Telegram recovery (ADR-006). Both intent endpoints are
+	// authenticated (the mobile client calls them with its current
+	// JWT) and return short-lived signed URLs that open the bot's
+	// /start handler. The status endpoint tells the Account screen
+	// whether the user is already linked; the unlink endpoint
+	// clears the binding so the user can re-link to a different
+	// Telegram account.
+	protected.Post("/auth/telegram/link-intent", handler.TelegramLinkIntent(logger, cfg))
+	protected.Post("/auth/telegram/restore-intent", handler.TelegramRestoreIntent(logger, cfg))
+	protected.Get("/account/telegram-status", handler.TelegramStatus(logger, db))
+	protected.Delete("/account/telegram", handler.TelegramUnlink(logger, db))
+
 	// Admin routes (JWT + admin role required).
 	// The audit middleware wraps the whole group so every mutating
 	// admin action is persisted to the audit_log table on success.
@@ -189,6 +203,25 @@ func main() {
 	// automatically. Full path: /api/v1/admin/change-password.
 	admin.Post("/change-password", handler.AdminChangePassword(logger, db))
 
+	// Telegram recovery bot (ADR-006). Starts only when the env var
+	// TELEGRAM_RECOVERY_BOT_TOKEN is set — deployments without it
+	// run fine and just don't expose the recovery flow. Runs for
+	// the lifetime of the process, cancelled via botCtx on shutdown.
+	botCtx, botCancel := context.WithCancel(context.Background())
+	defer botCancel()
+	recoveryBot, err := bot.New(cfg, db, logger)
+	if err != nil {
+		logger.Fatal("failed to initialise telegram recovery bot", zap.Error(err))
+	}
+	if recoveryBot != nil {
+		// Propagate the live bot username back to the handlers so
+		// the deep links they mint match the actual bot.
+		handler.SetTelegramBotUsername(cfg.RecoveryBotUsername)
+		go recoveryBot.Run(botCtx)
+	} else {
+		logger.Info("telegram recovery bot disabled (no TELEGRAM_RECOVERY_BOT_TOKEN set)")
+	}
+
 	// Start server
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.Port)
@@ -202,6 +235,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
+	botCancel()
 
 	logger.Info("shutting down API server...")
 
