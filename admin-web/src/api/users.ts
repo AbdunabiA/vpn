@@ -9,6 +9,10 @@ export interface AdminUser {
   subscription_tier: "free" | "premium" | "ultimate";
   subscription_expires_at: string | null;
   role: "user" | "admin";
+  // ADR-006 Telegram recovery binding. Both nullable — users who
+  // haven't linked Telegram just have both as null.
+  telegram_user_id: number | null;
+  telegram_linked_at: string | null;
   created_at: string;
 }
 

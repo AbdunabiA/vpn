@@ -22,6 +22,12 @@ const PAGE_SIZE = 50;
 // literal action name from the backend, so any new action added later
 // will fall through to the default gray until it's explicitly styled.
 function actionClass(action: string): string {
+  // ADR-006 telegram recovery actions are positive audit events —
+  // render them emerald so they stand out from the delete/update
+  // colours above.
+  if (action === "tg_link" || action === "tg_restore" || action === "tg_relink") {
+    return "bg-emerald-500/10 text-emerald-300 ring-1 ring-inset ring-emerald-500/30";
+  }
   if (action.startsWith("delete_")) {
     return "bg-rose-500/10 text-rose-300 ring-1 ring-inset ring-rose-500/30";
   }

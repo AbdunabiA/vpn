@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, Send } from "lucide-react";
 
 import { listUsers, type AdminUser } from "@/api/users";
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,9 @@ export function Users() {
               <TableHead>Имя</TableHead>
               <TableHead className="w-[120px]">Тариф</TableHead>
               <TableHead className="w-[100px]">Роль</TableHead>
+              <TableHead className="w-[80px]" title="Привязан ли Telegram для восстановления">
+                <Send className="size-4 text-muted-foreground" aria-label="Telegram" />
+              </TableHead>
               <TableHead className="w-[180px]">Истекает</TableHead>
               <TableHead className="w-[180px]">Создан</TableHead>
             </TableRow>
@@ -99,7 +102,7 @@ export function Users() {
               // on the first render.
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
@@ -107,7 +110,7 @@ export function Users() {
             ) : users.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   className="text-center text-sm text-muted-foreground"
                 >
                   {search
@@ -212,6 +215,16 @@ function UserRow({
         >
           {user.role}
         </span>
+      </TableCell>
+      <TableCell>
+        {user.telegram_user_id ? (
+          <Check
+            className="size-4 text-sky-400"
+            aria-label="Telegram привязан"
+          />
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
       </TableCell>
       <TableCell className="text-muted-foreground">
         {formatDate(user.subscription_expires_at)}

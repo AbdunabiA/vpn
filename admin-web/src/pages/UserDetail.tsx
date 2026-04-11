@@ -222,6 +222,38 @@ export function UserDetail() {
         </CardContent>
       </Card>
 
+      {/* Telegram recovery binding (ADR-006). Rendered as a small info
+          card so admins can see whether a user has a recovery channel
+          and when it was established — useful when triaging "lost my
+          phone" support requests. */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Восстановление через Telegram</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {user.telegram_user_id ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded-md bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-300 ring-1 ring-inset ring-sky-500/30">
+                  Привязан
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  tg_id {user.telegram_user_id}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                с {formatDate(user.telegram_linked_at)}
+              </div>
+            </div>
+          ) : (
+            <div className="text-muted-foreground">
+              Не привязан. Этот пользователь не сможет восстановить аккаунт
+              при смене устройства.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Action bar ------------------------------------------------------- */}
       <Card>
         <CardHeader>
