@@ -19,6 +19,7 @@ import {
   type UpdateUserInput,
 } from "@/api/users";
 import { Button } from "@/components/ui/button";
+import { ConnectionsSection } from "@/components/ConnectionsSection";
 import { DevicesSection } from "@/components/DevicesSection";
 import {
   Card,
@@ -260,6 +261,8 @@ export function UserDetail() {
       </Card>
 
       <DevicesSection userID={user.id} />
+
+      <ConnectionsSection userID={user.id} />
 
       <CustomExpirationDialog
         open={customOpen}

@@ -1,12 +1,33 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { Suspense, lazy } from "react";
+
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Login } from "@/pages/Login";
-import { Placeholder } from "@/pages/Placeholder";
-import { Servers } from "@/pages/Servers";
-import { UserDetail } from "@/pages/UserDetail";
 import { Users } from "@/pages/Users";
+import { UserDetail } from "@/pages/UserDetail";
+
+// Lazy-loaded routes — Servers, Activity and Settings are secondary
+// pages that most admin sessions will never visit. Splitting them
+// out of the initial bundle keeps the login → dashboard path lean.
+const Servers = lazy(() =>
+  import("@/pages/Servers").then((m) => ({ default: m.Servers })),
+);
+const Activity = lazy(() =>
+  import("@/pages/Activity").then((m) => ({ default: m.Activity })),
+);
+const Settings = lazy(() =>
+  import("@/pages/Settings").then((m) => ({ default: m.Settings })),
+);
+
+function LazyFallback() {
+  return (
+    <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+      Loading…
+    </div>
+  );
+}
 
 export default function App() {
   return (
@@ -17,20 +38,28 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/users" element={<Users />} />
         <Route path="/users/:id" element={<UserDetail />} />
-        <Route path="/servers" element={<Servers />} />
-        {/* Placeholders for routes that will be filled in during B-4.
-            Keeping them wired to a single component means the sidebar links
-            already work and the layout can be smoke-tested end-to-end. */}
+        <Route
+          path="/servers"
+          element={
+            <Suspense fallback={<LazyFallback />}>
+              <Servers />
+            </Suspense>
+          }
+        />
         <Route
           path="/activity"
           element={
-            <Placeholder title="Activity" subtitle="Coming in Phase B-3" />
+            <Suspense fallback={<LazyFallback />}>
+              <Activity />
+            </Suspense>
           }
         />
         <Route
           path="/settings"
           element={
-            <Placeholder title="Settings" subtitle="Coming in Phase B-4" />
+            <Suspense fallback={<LazyFallback />}>
+              <Settings />
+            </Suspense>
           }
         />
       </Route>

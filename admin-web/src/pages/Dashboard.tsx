@@ -1,15 +1,23 @@
+import { Suspense, lazy } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, CreditCard, Server, Users } from "lucide-react";
 
 import { getAdminStats, type AdminStats } from "@/api/stats";
-import { StatsChart } from "@/components/StatsChart";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber } from "@/lib/format";
+
+// Recharts is heavy (~100 KB gz). Splitting StatsChart into its own
+// chunk keeps the initial dashboard render fast — users see the KPI
+// cards immediately and the chart fades in a moment later.
+const StatsChart = lazy(() =>
+  import("@/components/StatsChart").then((m) => ({ default: m.StatsChart })),
+);
 
 interface KpiDef {
   key: keyof AdminStats;
@@ -77,7 +85,9 @@ export function Dashboard() {
         </Card>
       )}
 
-      <StatsChart />
+      <Suspense fallback={<Skeleton className="h-[340px] w-full" />}>
+        <StatsChart />
+      </Suspense>
     </div>
   );
 }
