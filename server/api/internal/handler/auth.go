@@ -111,6 +111,93 @@ func AdminLogin(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 	}
 }
 
+// AdminChangePassword handles POST /auth/admin/change-password.
+// Requires the caller to be an authenticated admin (enforced by the
+// admin route group). The request body must carry the current_password
+// so a stolen access token alone can't rotate credentials — the
+// attacker would need the current password too.
+//
+// On success the existing refresh sessions are NOT invalidated, so the
+// admin's other tabs keep working until their access token expires in
+// the normal 5-minute cycle. If you want aggressive invalidation, call
+// this endpoint from a "sign out everywhere" button — that's a future
+// enhancement.
+func AdminChangePassword(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		adminID, _ := c.Locals("user_id").(string)
+		if adminID == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "unauthorized",
+			})
+		}
+
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+			NewPassword     string `json:"new_password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "invalid request body",
+			})
+		}
+		if req.CurrentPassword == "" || req.NewPassword == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "current_password and new_password required",
+			})
+		}
+		// bcrypt caps plaintext at 72 bytes — reject anything longer
+		// so users get a clear error instead of a silent truncation.
+		if len(req.NewPassword) < 8 || len(req.NewPassword) > 72 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "new_password must be 8..72 characters",
+			})
+		}
+
+		user, err := repository.FindUserByIDAdmin(db, adminID)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "unauthorized",
+			})
+		}
+		if user.PasswordHash == nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "account has no password",
+			})
+		}
+		if err := bcrypt.CompareHashAndPassword(
+			[]byte(*user.PasswordHash),
+			[]byte(req.CurrentPassword),
+		); err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "current password is incorrect",
+			})
+		}
+
+		newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			logger.Error("change-password: bcrypt failed", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		hashStr := string(newHash)
+		if err := repository.UpdateUser(db, adminID, map[string]interface{}{
+			"password_hash": &hashStr,
+		}); err != nil {
+			logger.Error("change-password: UpdateUser failed",
+				zap.String("admin_id", adminID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+
+		logger.Info("admin password changed", zap.String("admin_id", adminID))
+		return c.JSON(fiber.Map{"data": fiber.Map{"success": true}})
+	}
+}
+
 // RefreshToken handles POST /auth/refresh.
 // Validates refresh token, rotates tokens, returns new pair.
 func RefreshToken(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handler {

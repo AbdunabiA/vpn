@@ -150,8 +150,14 @@ func main() {
 	protected.Get("/devices", handler.ListMyDevices(logger, db))
 	protected.Delete("/devices/:id", handler.DeleteMyDevice(logger, db))
 
-	// Admin routes (JWT + admin role required)
-	admin := api.Group("/admin", authMiddleware, middleware.AdminRequired())
+	// Admin routes (JWT + admin role required).
+	// The audit middleware wraps the whole group so every mutating
+	// admin action is persisted to the audit_log table on success.
+	admin := api.Group("/admin",
+		authMiddleware,
+		middleware.AdminRequired(),
+		middleware.AuditLog(db, logger),
+	)
 	admin.Get("/users", handler.AdminListUsers(logger, db))
 	admin.Get("/users/:id", handler.AdminGetUser(logger, db))
 	admin.Patch("/users/:id", handler.AdminUpdateUser(logger, db))
@@ -163,6 +169,12 @@ func main() {
 	admin.Get("/stats/timeseries", handler.AdminGetStatsTimeseries(logger, db))
 	admin.Get("/users/:id/devices", handler.AdminListUserDevices(logger, db))
 	admin.Delete("/users/:id/devices/:device_id", handler.AdminDeleteUserDevice(logger, db))
+	admin.Get("/users/:id/connections", handler.AdminListUserConnections(logger, db))
+	admin.Get("/audit-log", handler.AdminGetAuditLog(logger, db))
+	// Mounted under /admin so it's covered by the version-gate prefix
+	// skip, the AdminRequired middleware, and the audit middleware
+	// automatically. Full path: /api/v1/admin/change-password.
+	admin.Post("/change-password", handler.AdminChangePassword(logger, db))
 
 	// Start server
 	go func() {

@@ -210,8 +210,50 @@ func AdminUpdateUser(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	}
 }
 
+// adminServerResponse exposes fields that are marked json:"-" on the
+// shared model.VPNServer (because the mobile client must never see
+// them). Used only on admin GET endpoints so the panel can display
+// capacity, load, and REALITY key material.
+type adminServerResponse struct {
+	ID               string `json:"id"`
+	Hostname         string `json:"hostname"`
+	IPAddress        string `json:"ip_address"`
+	Region           string `json:"region"`
+	City             string `json:"city"`
+	Country          string `json:"country"`
+	CountryCode      string `json:"country_code"`
+	Protocol         string `json:"protocol"`
+	Capacity         int    `json:"capacity"`
+	CurrentLoad      int    `json:"load_percent"`
+	IsActive         bool   `json:"is_active"`
+	RealityPublicKey string `json:"reality_public_key"`
+	RealityShortID   string `json:"reality_short_id"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func toAdminServerResponse(s model.VPNServer) adminServerResponse {
+	return adminServerResponse{
+		ID:               s.ID,
+		Hostname:         s.Hostname,
+		IPAddress:        s.IPAddress,
+		Region:           s.Region,
+		City:             s.City,
+		Country:          s.Country,
+		CountryCode:      s.CountryCode,
+		Protocol:         s.Protocol,
+		Capacity:         s.Capacity,
+		CurrentLoad:      s.CurrentLoad,
+		IsActive:         s.IsActive,
+		RealityPublicKey: s.RealityPublicKey,
+		RealityShortID:   s.RealityShortID,
+		CreatedAt:        s.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
 // AdminListServers handles GET /admin/servers.
-// Returns all VPN servers including inactive ones.
+// Returns all VPN servers including inactive ones. Uses the
+// adminServerResponse DTO so the panel sees capacity and REALITY
+// fields hidden from the mobile client.
 func AdminListServers(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		servers, err := repository.ListAllServers(db)
@@ -224,9 +266,11 @@ func AdminListServers(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 
 		logger.Debug("admin: listed servers", zap.Int("count", len(servers)))
 
-		return c.JSON(fiber.Map{
-			"data": servers,
-		})
+		out := make([]adminServerResponse, 0, len(servers))
+		for _, s := range servers {
+			out = append(out, toAdminServerResponse(s))
+		}
+		return c.JSON(fiber.Map{"data": out})
 	}
 }
 
@@ -506,6 +550,59 @@ func AdminListUserDevices(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			})
 		}
 		return c.JSON(fiber.Map{"data": devices})
+	}
+}
+
+// AdminListUserConnections handles GET /admin/users/:id/connections.
+// Returns up to 50 most-recent connection rows for the given user.
+// Read-only — the audit-relevant "connection activity" surface, not the
+// active-connections management handler used by the mobile client.
+func AdminListUserConnections(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := c.Params("id")
+		if userID == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "user id required",
+			})
+		}
+		limit, _ := strconv.Atoi(c.Query("limit", "50"))
+		conns, err := repository.ListConnectionsByUser(db, userID, limit)
+		if err != nil {
+			logger.Error("admin: failed to list user connections",
+				zap.String("user_id", userID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		return c.JSON(fiber.Map{"data": conns})
+	}
+}
+
+// AdminGetAuditLog handles GET /admin/audit-log.
+// Paginated read of the audit_log table. Query params: page, limit.
+func AdminGetAuditLog(logger *zap.Logger, db *gorm.DB) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		page, limit := parsePagination(c)
+		entries, total, err := repository.ListAuditEntries(db, page, limit)
+		if err != nil {
+			logger.Error("admin: failed to list audit entries", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		return c.JSON(fiber.Map{
+			"data": fiber.Map{
+				"entries": entries,
+				"pagination": fiber.Map{
+					"page":        page,
+					"limit":       limit,
+					"total":       total,
+					"total_pages": (total + int64(limit) - 1) / int64(limit),
+				},
+			},
+		})
 	}
 }
 
