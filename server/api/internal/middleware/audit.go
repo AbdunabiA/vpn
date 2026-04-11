@@ -40,12 +40,16 @@ func AuditLog(db *gorm.DB, logger *zap.Logger) fiber.Handler {
 		}
 
 		// Best-effort extraction of the acting admin's UUID. If Locals
-		// is missing (e.g. the middleware stack changed), skip the
-		// audit write — log, don't fail the request.
+		// is missing the middleware stack is misconfigured (this
+		// middleware must run after AuthRequired + AdminRequired).
+		// Skip the audit write but log loudly — a compliance-grade
+		// trail cannot tolerate silent gaps.
 		adminID, _ := c.Locals("user_id").(string)
 		if adminID == "" {
-			logger.Warn("audit: missing user_id in locals, skipping",
+			logger.Error("audit: missing user_id in locals — middleware stack misordered",
+				zap.String("method", c.Method()),
 				zap.String("path", c.Path()),
+				zap.String("remote", c.IP()),
 			)
 			return nil
 		}
@@ -105,12 +109,12 @@ func describeAction(method, path string) string {
 	stripped := strings.TrimPrefix(path, "/api/v1")
 
 	switch {
-	case method == fiber.MethodPost && strings.HasSuffix(stripped, "/auth/admin/change-password"):
+	case method == fiber.MethodPost && strings.HasSuffix(stripped, "/admin/change-password"):
 		return "change_password"
-	case method == fiber.MethodPost && strings.HasSuffix(stripped, "/auth/admin-login"):
-		return "admin_login"
 	case method == fiber.MethodPatch && strings.HasPrefix(stripped, "/admin/users/"):
 		return "update_user"
+	// Device delete must come before user delete because the device URL
+	// is nested under /admin/users/:id/ and contains "/devices/".
 	case method == fiber.MethodDelete && strings.Contains(stripped, "/devices/"):
 		return "delete_device"
 	case method == fiber.MethodDelete && strings.HasPrefix(stripped, "/admin/users/"):
@@ -122,7 +126,17 @@ func describeAction(method, path string) string {
 	case method == fiber.MethodPost && strings.HasPrefix(stripped, "/admin/servers"):
 		return "create_server"
 	}
-	return strings.ToLower(method) + "_" + stripped
+	// Fallback: sanitise the path into a snake_case action name so the
+	// audit_log.action column (VARCHAR(64)) can't overflow on deep URLs
+	// and so human readers aren't confronted with slashes in an
+	// otherwise-snake-case column.
+	sanitised := strings.TrimPrefix(stripped, "/")
+	sanitised = strings.ReplaceAll(sanitised, "/", "_")
+	action := strings.ToLower(method) + "_" + sanitised
+	if len(action) > 60 {
+		action = action[:60]
+	}
+	return action
 }
 
 // extractTargetID pulls the primary :id path parameter for the common

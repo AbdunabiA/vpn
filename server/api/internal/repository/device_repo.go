@@ -142,6 +142,21 @@ func DeleteDeviceByOwner(db *gorm.DB, deviceRowID, ownerUserID string) error {
 	return nil
 }
 
+// FindDeviceByID looks up a device row by its UUID primary key. Used by
+// the admin handler to verify the declared user matches the device's
+// actual owner before issuing a delete — see AdminDeleteUserDevice.
+func FindDeviceByID(db *gorm.DB, id string) (*model.Device, error) {
+	var device model.Device
+	result := db.Where("id = ?", id).First(&device)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, result.Error
+	}
+	return &device, nil
+}
+
 // AdminDeleteDevice removes a device row by id with no ownership check.
 // The admin handler uses this when evicting a device from any user's
 // account (e.g. after a support request for a stolen phone). Returns

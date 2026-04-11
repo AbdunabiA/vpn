@@ -111,7 +111,7 @@ func AdminLogin(logger *zap.Logger, cfg *config.Config, db *gorm.DB) fiber.Handl
 	}
 }
 
-// AdminChangePassword handles POST /auth/admin/change-password.
+// AdminChangePassword handles POST /admin/change-password.
 // Requires the caller to be an authenticated admin (enforced by the
 // admin route group). The request body must carry the current_password
 // so a stolen access token alone can't rotate credentials — the
@@ -155,8 +155,19 @@ func AdminChangePassword(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 
 		user, err := repository.FindUserByIDAdmin(db, adminID)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "unauthorized",
+			if errors.Is(err, repository.ErrNotFound) {
+				// Admin's JWT references a user that no longer exists —
+				// stale session. Don't log as an error.
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "unauthorized",
+				})
+			}
+			logger.Error("change-password: failed to load admin user",
+				zap.String("admin_id", adminID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
 			})
 		}
 		if user.PasswordHash == nil {

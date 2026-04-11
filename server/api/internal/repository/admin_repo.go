@@ -185,8 +185,14 @@ func GetTimeseries(db *gorm.DB, days int) (signups, connections []TimeseriesBuck
 
 	// Build the zero-filled skeleton up front. We key by YYYY-MM-DD so
 	// that Postgres's date_trunc results slot straight in.
+	//
+	// startDay must be truncated to midnight UTC. If we kept the
+	// current time-of-day the query would discard rows created earlier
+	// than that on the earliest bucket's date, silently under-counting
+	// the oldest day in the window.
 	now := time.Now().UTC()
-	startDay := now.AddDate(0, 0, -(days - 1))
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startDay := today.AddDate(0, 0, -(days - 1))
 	signupMap := make(map[string]int64, days)
 	connectMap := make(map[string]int64, days)
 	orderedDays := make([]string, 0, days)

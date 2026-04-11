@@ -77,14 +77,18 @@ func (p *AWGParams) Scan(value interface{}) error {
 }
 
 // Connection tracks an active VPN connection (for concurrent device limiting).
+// JSON tags are snake_case across all fields so admin-panel TypeScript types
+// stay in sync with the wire shape. The mobile client only reads Length from
+// GET /connections and .id from POST /connections, so snake-casing the rest
+// does not break backwards compatibility there.
 type Connection struct {
-	ID              string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	UserID          string     `gorm:"not null;index"`
-	ServerID        string     `gorm:"not null;index"`
-	ConnectedAt     time.Time  `gorm:"autoCreateTime"`
-	DisconnectedAt  *time.Time `gorm:"index"`
-	BytesUp         int64      `gorm:"default:0"`
-	BytesDown       int64      `gorm:"default:0"`
+	ID              string     `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	UserID          string     `json:"user_id" gorm:"not null;index"`
+	ServerID        string     `json:"server_id" gorm:"not null;index"`
+	ConnectedAt     time.Time  `json:"connected_at" gorm:"autoCreateTime"`
+	DisconnectedAt  *time.Time `json:"disconnected_at" gorm:"index"`
+	BytesUp         int64      `json:"bytes_up" gorm:"default:0"`
+	BytesDown       int64      `json:"bytes_down" gorm:"default:0"`
 	Status          string     `json:"status" gorm:"type:varchar(20);not null;default:connected"`
 	LastHeartbeatAt *time.Time `json:"last_heartbeat_at"`
 }

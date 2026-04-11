@@ -47,7 +47,10 @@ func AdminListUsers(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 			})
 		}
 
-		logger.Info("admin: listed users",
+		// Debug level — the panel auto-refetches this endpoint and
+		// logging at Info floods the backend log with one row per
+		// dashboard interaction.
+		logger.Debug("admin: listed users",
 			zap.Int("page", page),
 			zap.Int("limit", limit),
 			zap.Int64("total", total),
@@ -565,6 +568,20 @@ func AdminListUserConnections(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 				"error": "user id required",
 			})
 		}
+		// Cheap 404 on missing user so the panel shows "user not
+		// found" instead of an empty list — matches the UX
+		// precedent set by AdminListUserDevices.
+		if _, err := repository.FindUserByIDAdmin(db, userID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "user not found",
+				})
+			}
+			logger.Error("admin: failed to lookup user for connections", zap.Error(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
 		limit, _ := strconv.Atoi(c.Query("limit", "50"))
 		conns, err := repository.ListConnectionsByUser(db, userID, limit)
 		if err != nil {
@@ -607,18 +624,53 @@ func AdminGetAuditLog(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 }
 
 // AdminDeleteUserDevice handles DELETE /admin/users/:id/devices/:device_id.
-// Removes a single device row regardless of ownership (admin override).
-// The :id path parameter is included for URL symmetry and so that the
-// audit log (Phase B-4) can associate the action with a target user,
-// but the actual delete is keyed on :device_id alone.
+// Removes a single device row. Admin override — no ownership check from
+// the caller's perspective — but we DO cross-check that the device row
+// currently belongs to the user named in the URL. Without that check,
+// a stale panel tab or a typo'd URL could delete a device belonging to
+// a different user while the audit log records the action against the
+// wrong target, defeating the compliance purpose of the log.
 func AdminDeleteUserDevice(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		targetUserID := c.Params("id")
 		deviceRowID := c.Params("device_id")
-		if deviceRowID == "" {
+		if targetUserID == "" || deviceRowID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "device id required",
+				"error": "user id and device id required",
 			})
 		}
+
+		// Load the device first so we can verify its current owner
+		// matches the URL-encoded user id. FindDeviceByID returns
+		// ErrNotFound for both "no such row" and "row exists but
+		// belongs to a different user" — the admin sees the same
+		// 404 either way, which is fine.
+		dev, err := repository.FindDeviceByID(db, deviceRowID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "device not found",
+				})
+			}
+			logger.Error("admin: failed to load device",
+				zap.String("device_row_id", deviceRowID),
+				zap.Error(err),
+			)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "internal server error",
+			})
+		}
+		if dev.UserID != targetUserID {
+			logger.Warn("admin: device/user mismatch on delete",
+				zap.String("device_row_id", deviceRowID),
+				zap.String("url_user_id", targetUserID),
+				zap.String("real_owner_id", dev.UserID),
+			)
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "device not found",
+			})
+		}
+
 		if err := repository.AdminDeleteDevice(db, deviceRowID); err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -635,7 +687,7 @@ func AdminDeleteUserDevice(logger *zap.Logger, db *gorm.DB) fiber.Handler {
 		}
 		logger.Info("admin: device removed",
 			zap.String("device_row_id", deviceRowID),
-			zap.String("target_user_id", c.Params("id")),
+			zap.String("target_user_id", targetUserID),
 		)
 		return c.SendStatus(fiber.StatusNoContent)
 	}
