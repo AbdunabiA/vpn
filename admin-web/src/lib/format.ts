@@ -30,3 +30,22 @@ export function formatNumber(n: number | null | undefined): string {
   // is the expected rendering in Russian-language interfaces.
   return new Intl.NumberFormat("ru-RU").format(n);
 }
+
+// formatBytes renders a byte count as a compact human-readable string
+// (KB/MB/GB/TB). Used on the traffic chart tooltip and the dashboard
+// traffic KPIs. Uses 1024 rather than 1000 — standard for network
+// bandwidth reporting.
+export function formatBytes(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  let v = Math.abs(n);
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  // One decimal place for KB and above, integer for bytes.
+  const display = i === 0 ? v.toFixed(0) : v.toFixed(1);
+  return `${display} ${units[i]}`;
+}

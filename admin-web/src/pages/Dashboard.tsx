@@ -12,11 +12,18 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber } from "@/lib/format";
 
-// Recharts is heavy (~100 KB gz). Splitting StatsChart into its own
-// chunk keeps the initial dashboard render fast — users see the KPI
-// cards immediately and the chart fades in a moment later.
+// Recharts is heavy (~100 KB gz). Splitting the chart-bearing sections
+// into their own chunks keeps the initial dashboard render fast —
+// users see the KPI cards immediately and the charts fade in a moment
+// later. Vite hoists shared deps (recharts) between these two lazy
+// chunks into a common chunk automatically.
 const StatsChart = lazy(() =>
   import("@/components/StatsChart").then((m) => ({ default: m.StatsChart })),
+);
+const AnalyticsSection = lazy(() =>
+  import("@/components/AnalyticsSection").then((m) => ({
+    default: m.AnalyticsSection,
+  })),
 );
 
 interface KpiDef {
@@ -83,6 +90,10 @@ export function Dashboard() {
 
       <Suspense fallback={<Skeleton className="h-[340px] w-full" />}>
         <StatsChart />
+      </Suspense>
+
+      <Suspense fallback={<Skeleton className="h-[600px] w-full" />}>
+        <AnalyticsSection />
       </Suspense>
     </div>
   );
