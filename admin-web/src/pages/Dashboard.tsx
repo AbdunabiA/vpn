@@ -66,11 +66,7 @@ export function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-semibold">
-                {isLoading
-                  ? "…"
-                  : isError
-                    ? "—"
-                    : formatNumber(data ? Number(data[key]) : undefined)}
+                {isLoading ? "…" : isError ? "—" : formatNumber(data?.[key])}
               </div>
             </CardContent>
           </Card>

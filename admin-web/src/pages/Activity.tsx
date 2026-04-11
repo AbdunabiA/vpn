@@ -170,10 +170,17 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
 function DetailsCell({ details }: { details: AuditEntry["details"] }) {
   if (!details) return <span>—</span>;
   // Compact one-line key=value rendering; the most useful bits are
-  // method + path + query. Long values are truncated via CSS.
+  // method + path + query. Non-primitive values get JSON.stringify so
+  // objects render as {"k":"v"} instead of "[object Object]".
   const entries = Object.entries(details)
     .filter(([k]) => k !== "method" && k !== "path")
-    .map(([k, v]) => `${k}=${String(v)}`)
+    .map(([k, v]) => {
+      const s =
+        typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+          ? String(v)
+          : JSON.stringify(v);
+      return `${k}=${s}`;
+    })
     .join(" ");
   return (
     <div className="max-w-[360px] truncate" title={JSON.stringify(details)}>

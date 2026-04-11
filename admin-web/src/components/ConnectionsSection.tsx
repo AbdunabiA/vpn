@@ -86,9 +86,7 @@ function ConnectionRow({ entry }: { entry: ConnectionEntry }) {
         {formatDate(entry.connected_at)}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
-        {formatDate(entry.disconnected_at) === "—" && active
-          ? "—"
-          : formatDate(entry.disconnected_at)}
+        {entry.disconnected_at ? formatDate(entry.disconnected_at) : "—"}
       </TableCell>
       <TableCell>
         <span

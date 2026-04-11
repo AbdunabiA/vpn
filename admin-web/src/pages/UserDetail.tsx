@@ -370,13 +370,16 @@ function CustomExpirationDialog({
 }) {
   // Seed the date picker with whatever the user currently has set, or 30
   // days from today if they have no expiration yet. Formatted as
-  // YYYY-MM-DD for <input type="date">.
+  // YYYY-MM-DD (UTC) for <input type="date">.
   const defaultDate = (() => {
     if (user.subscription_expires_at) {
       return toDateInputValue(new Date(user.subscription_expires_at));
     }
+    // setUTCDate mirrors toDateInputValue's UTC handling so the seed
+    // date is "30 days from today in UTC", not "30 days from today in
+    // whatever timezone the admin happens to be in".
     const d = new Date();
-    d.setDate(d.getDate() + 30);
+    d.setUTCDate(d.getUTCDate() + 30);
     return toDateInputValue(d);
   })();
 
@@ -462,10 +465,16 @@ function CustomExpirationDialog({
   );
 }
 
+// toDateInputValue renders a Date as the YYYY-MM-DD string an
+// <input type="date"> expects. Uses the UTC getters so the value
+// round-trips cleanly through the dialog: the dialog label says
+// "UTC", the picker reads UTC, the apply handler reconstructs the
+// string as a UTC ISO timestamp, and an admin in a non-UTC timezone
+// no longer sees their dates drift a day on every edit.
 function toDateInputValue(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 

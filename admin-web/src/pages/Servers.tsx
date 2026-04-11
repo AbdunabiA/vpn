@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Power, PowerOff } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +11,14 @@ import {
   type AdminServer,
 } from "@/api/servers";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -24,6 +33,7 @@ import { formatDate } from "@/lib/format";
 
 export function Servers() {
   const qc = useQueryClient();
+  const [pendingDelete, setPendingDelete] = useState<AdminServer | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["admin", "servers"],
@@ -50,6 +60,7 @@ export function Servers() {
       await qc.invalidateQueries({ queryKey: ["admin", "servers"] });
       await qc.invalidateQueries({ queryKey: ["admin", "stats"] });
       toast.success("Server deactivated (soft-deleted)");
+      setPendingDelete(null);
     },
     onError: (err: unknown) => {
       const axiosErr = err as AxiosError<{ error?: string }>;
@@ -110,15 +121,7 @@ export function Servers() {
                   onToggle={() =>
                     toggleMutation.mutate({ id: s.id, isActive: !s.is_active })
                   }
-                  onDelete={() => {
-                    if (
-                      confirm(
-                        `Deactivate ${s.hostname}? The row stays in the database and can be toggled back on.`,
-                      )
-                    ) {
-                      deleteMutation.mutate(s.id);
-                    }
-                  }}
+                  onDelete={() => setPendingDelete(s)}
                 />
               ))
             )}
@@ -131,6 +134,54 @@ export function Servers() {
           Failed to load servers: {(error as Error).message}
         </div>
       )}
+
+      <Dialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deactivate server?</DialogTitle>
+            <DialogDescription>
+              This is a soft delete — the row stays in the database with
+              is_active=false. You can toggle it back on at any time from
+              this page. Connected clients will drop once the current
+              load drains.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingDelete && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <div className="font-medium">{pendingDelete.hostname}</div>
+              <div className="font-mono text-xs text-muted-foreground">
+                {pendingDelete.ip_address} · {pendingDelete.city},{" "}
+                {pendingDelete.country}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => setPendingDelete(null)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                pendingDelete && deleteMutation.mutate(pendingDelete.id)
+              }
+            >
+              Deactivate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

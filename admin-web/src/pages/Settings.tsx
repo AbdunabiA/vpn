@@ -102,9 +102,10 @@ export function Settings() {
             <CardTitle className="text-base">Change password</CardTitle>
           </div>
           <CardDescription>
-            Pick something long. The default seed password{" "}
-            <span className="font-mono">thisisvp</span> should be rotated
-            immediately.
+            Pick something long (8–72 characters). If you are still using
+            the seed password from first provisioning, rotate it now. Other
+            active sessions stay alive until their refresh token expires —
+            this is a deliberate choice, not a bug.
           </CardDescription>
         </CardHeader>
         <CardContent>

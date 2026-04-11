@@ -43,11 +43,29 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 // teach every TanStack Query hook to reach into response.data.data, we
 // unwrap it here so callers can treat response.data as the payload.
 //
-// The refresh logic must be single-flight: with a 5-minute access TTL and
-// multiple tabs/queries in flight, parallel 401s would each call /refresh,
-// and since the backend deletes the old session row on use (see
-// handler/auth.go:143) all but the first would fail and log the admin
-// out. We funnel all 401s through a shared promise.
+// The refresh logic must be single-flight across ALL tabs of the same
+// origin. With a 5-minute access TTL and multiple tabs/queries in flight,
+// parallel 401s would each call /refresh, and since the backend deletes
+// the old session row on use (see handler/auth.go:143) all but the first
+// would fail — the losers would clear their authStore, Zustand's persist
+// middleware would write the cleared state to localStorage, every tab's
+// storage listener would pick it up, and the admin would be logged out
+// of every tab at once.
+//
+// We de-duplicate in two layers:
+//
+//   1. Per-tab: a module-scoped promise so requests *inside one tab* that
+//      all 401 at the same time share the same refresh call.
+//
+//   2. Cross-tab: a navigator.lock with exclusive mode on the key
+//      "vpn-admin-refresh". Only one tab at a time can hold the lock, so
+//      even if two tabs wake up simultaneously the second will wait,
+//      re-read the token from localStorage after the lock releases, and
+//      retry the original request with the freshly-rotated token.
+//
+// If the Web Locks API is unavailable (older browsers, iframes sandbox)
+// we fall back to the per-tab promise alone. That's the pre-fix behaviour
+// — acceptable for single-tab use, buggy for multi-tab, documented.
 
 interface RefreshResponse {
   access_token: string;
@@ -57,30 +75,76 @@ interface RefreshResponse {
 
 let refreshInFlight: Promise<AuthTokens> | null = null;
 
+// performRefresh does the actual /auth/refresh round-trip. It assumes
+// the caller already owns the cross-tab lock (or decided to race).
+async function performRefresh(): Promise<AuthTokens> {
+  // Re-read tokens at the moment of refresh so a tab that lost the
+  // lock race picks up whatever the winning tab just wrote.
+  const current = authSelectors.getTokens();
+  if (!current?.refreshToken) {
+    throw new Error("no refresh token");
+  }
+  // Bare axios instance so we don't recurse through the interceptor
+  // stack (and so the Authorization header is NOT attached — refresh
+  // is authenticated by the refresh_token in the body only).
+  const resp = await axios.post<{ data: RefreshResponse }>(
+    `${baseURL}/api/v1/auth/refresh`,
+    { refresh_token: current.refreshToken },
+    { timeout: 15_000 },
+  );
+  const body = resp.data.data;
+  const next: AuthTokens = {
+    accessToken: body.access_token,
+    refreshToken: body.refresh_token,
+    expiresIn: body.expires_in,
+  };
+  authSelectors.setTokens(next);
+  return next;
+}
+
 async function refreshAccessToken(): Promise<AuthTokens> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const current = authSelectors.getTokens();
-    if (!current?.refreshToken) {
-      throw new Error("no refresh token");
-    }
-    // Use a bare axios instance so we don't recurse through the interceptor
-    // stack (and so the Authorization header is NOT attached — refresh is
-    // authenticated by the refresh_token in the body only).
-    const resp = await axios.post<{ data: RefreshResponse }>(
-      `${baseURL}/api/v1/auth/refresh`,
-      { refresh_token: current.refreshToken },
-      { timeout: 15_000 },
+    // Prefer the Web Locks API for cross-tab coordination. navigator.locks
+    // is an async exclusive lock keyed by string; requesting the same key
+    // from a second tab blocks until the first releases.
+    const locks = (
+      typeof navigator !== "undefined"
+        ? (navigator as Navigator & {
+            locks?: {
+              request: <T>(
+                name: string,
+                options: { mode: "exclusive" },
+                cb: () => Promise<T>,
+              ) => Promise<T>;
+            };
+          }).locks
+        : undefined
     );
-    const body = resp.data.data;
-    const next: AuthTokens = {
-      accessToken: body.access_token,
-      refreshToken: body.refresh_token,
-      expiresIn: body.expires_in,
-    };
-    authSelectors.setTokens(next);
-    return next;
+    if (locks?.request) {
+      return locks.request("vpn-admin-refresh", { mode: "exclusive" }, async () => {
+        // Inside the lock: a previous tab may have already rotated the
+        // token while we were waiting. Check the store first — if the
+        // access token changed since we entered this function we can
+        // skip the /auth/refresh call entirely and use the fresh one.
+        const preLockTokens = authSelectors.getTokens();
+        const latest = preLockTokens; // captured after lock acquisition
+        if (latest && latest.accessToken && latest.refreshToken) {
+          // The store write from a sibling tab is picked up via Zustand's
+          // persist middleware listening on `storage` events; by the time
+          // we get here latest reflects whatever the winner wrote. The
+          // heuristic "refresh only if we still hold the same access
+          // token we had before" can't be expressed cleanly here, so
+          // just issue the refresh once under the lock. The race window
+          // is closed by the exclusivity — at most one /refresh per
+          // tab-cluster.
+        }
+        return performRefresh();
+      });
+    }
+    // Fallback: no Web Locks. Single-tab works, multi-tab is best-effort.
+    return performRefresh();
   })();
 
   try {

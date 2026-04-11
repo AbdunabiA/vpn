@@ -13,9 +13,12 @@ on:
 # /opt/vpn. The backend workflow ignores `admin-web/**` and this workflow
 # ignores `server/**`, so a single PR that touches both will trigger both.
 #
-# The admin panel is a fully static bundle (no runtime, no container), so
-# the "deploy" step is just an rsync/scp of the built dist/ directory to
-# /opt/vpn/admin-web/dist/, where nginx serves it under /admin/.
+# The admin panel is a fully static bundle (no runtime, no container). The
+# upload step builds into /opt/vpn/admin-web/dist.new (so a failed or
+# partial upload never touches the currently-serving dist/) and the swap
+# step renames dist -> dist.old and dist.new -> dist in a single ssh call.
+# nginx picks up the new tree on the very next request — there is no
+# server restart and no "empty dist" race window.
 
 jobs:
   build-and-deploy:
@@ -37,22 +40,23 @@ jobs:
         working-directory: admin-web
         run: npm run build
 
-      # scp-action's `rm: true` wipes the remote target directory before
-      # copy so stale hashed asset files from previous builds don't pile
-      # up. `strip_components: 1` drops the `dist/` wrapper so files land
-      # at /opt/vpn/admin-web/dist/index.html (not dist/dist/index.html).
-      - name: Upload dist/ to server
+      # Upload to a staging directory (/opt/vpn/admin-web/dist.new) so
+      # the currently-live dist/ never disappears during the scp. The
+      # `rm: true` on the staging path is safe because nginx never
+      # serves from it. strip_components: 2 drops the "admin-web/dist"
+      # prefix so files land at dist.new/index.html, dist.new/assets/*.
+      - name: Upload dist/ to staging
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "admin-web/dist/*"
-          target: "/opt/vpn/admin-web/dist"
+          target: "/opt/vpn/admin-web/dist.new"
           strip_components: 2
           rm: true
 
-      - name: Verify
+      - name: Atomic swap and verify
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -60,7 +64,23 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            # Assert index.html landed where nginx will look for it.
-            test -f /opt/vpn/admin-web/dist/index.html
-            ls -lah /opt/vpn/admin-web/dist/
+            cd /opt/vpn/admin-web
+            # Sanity-check the staging directory before touching dist/.
+            # If the upload failed we want to abort here so the live
+            # dist/ stays serving whatever was there before.
+            test -f dist.new/index.html
+            # Atomic swap. The three-rename dance mimics a
+            # rename-exchange so a race-condition request between the
+            # two renames at worst hits a brief 404 on index.html
+            # instead of an empty directory. Keep dist.old for one
+            # rotation so a rollback is `mv dist.old dist`.
+            if [ -d dist.old ]; then
+              rm -rf dist.old
+            fi
+            if [ -d dist ]; then
+              mv dist dist.old
+            fi
+            mv dist.new dist
+            echo "Swap complete:"
+            ls -lah dist/
             echo "Admin panel deployed at $(date)"
