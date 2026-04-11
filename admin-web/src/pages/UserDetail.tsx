@@ -19,6 +19,7 @@ import {
   type UpdateUserInput,
 } from "@/api/users";
 import { Button } from "@/components/ui/button";
+import { DevicesSection } from "@/components/DevicesSection";
 import {
   Card,
   CardContent,
@@ -257,6 +258,8 @@ export function UserDetail() {
           </Button>
         </CardContent>
       </Card>
+
+      <DevicesSection userID={user.id} />
 
       <CustomExpirationDialog
         open={customOpen}

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, CreditCard, Server, Users } from "lucide-react";
 
 import { getAdminStats, type AdminStats } from "@/api/stats";
+import { StatsChart } from "@/components/StatsChart";
 import {
   Card,
   CardContent,
@@ -75,6 +76,8 @@ export function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      <StatsChart />
     </div>
   );
 }

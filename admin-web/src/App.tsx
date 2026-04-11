@@ -4,6 +4,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Login } from "@/pages/Login";
 import { Placeholder } from "@/pages/Placeholder";
+import { Servers } from "@/pages/Servers";
 import { UserDetail } from "@/pages/UserDetail";
 import { Users } from "@/pages/Users";
 
@@ -16,15 +17,10 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/users" element={<Users />} />
         <Route path="/users/:id" element={<UserDetail />} />
-        {/* Placeholders for routes that will be filled in during B-3/B-4.
+        <Route path="/servers" element={<Servers />} />
+        {/* Placeholders for routes that will be filled in during B-4.
             Keeping them wired to a single component means the sidebar links
             already work and the layout can be smoke-tested end-to-end. */}
-        <Route
-          path="/servers"
-          element={
-            <Placeholder title="Servers" subtitle="Coming in Phase B-3" />
-          }
-        />
         <Route
           path="/activity"
           element={
