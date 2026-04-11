@@ -51,6 +51,12 @@ services:
       STRIPE_PRICE_ULTIMATE: ${STRIPE_PRICE_ULTIMATE:-}
       TUNNEL_VLESS_UUID: ${TUNNEL_VLESS_UUID:?Set TUNNEL_VLESS_UUID in .env}
       MIN_APP_VERSION: ${MIN_APP_VERSION:-2.0.0}
+      # Telegram recovery bot (ADR-006). All three are optional — the
+      # bot goroutine only starts when TELEGRAM_RECOVERY_BOT_TOKEN is
+      # non-empty, so deployments that don't need recovery run fine.
+      TELEGRAM_RECOVERY_BOT_TOKEN: ${TELEGRAM_RECOVERY_BOT_TOKEN:-}
+      TELEGRAM_RECOVERY_BOT_USERNAME: ${TELEGRAM_RECOVERY_BOT_USERNAME:-risevp_bot}
+      TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-0}
     depends_on:
       postgres:
         condition: service_healthy
