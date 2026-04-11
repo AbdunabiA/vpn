@@ -140,6 +140,19 @@ export function useVpnConnection() {
     [setConnectionId],
   );
 
+  // Release any reserved slot whenever the tunnel lands in the
+  // 'error' state. The main transition watcher further down only
+  // releases slots on disconnect-edge transitions, which misses
+  // the case where the native tunnel fires an 'error' event
+  // directly without going through 'disconnected' first. Without
+  // this the slot leaks to the server's active-connection count
+  // and the next manual retry can hit the per-user device limit.
+  useEffect(() => {
+    if (connectionState === 'error' && connectionId) {
+      unregisterConnection(connectionId);
+    }
+  }, [connectionState, connectionId, unregisterConnection]);
+
   // Try connecting with the next protocol in the fallback queue
   const tryNextProtocol = useCallback(async () => {
     const fb = fallbackRef.current;
@@ -220,9 +233,20 @@ export function useVpnConnection() {
       fallbackRef.current.attemptPerProtocol = 0;
     }
 
-    // On transition from connected/reconnecting to disconnected: unregister + maybe reconnect
+    // On transition from ANY non-terminal state to disconnected: unregister + maybe reconnect.
+    //
+    // Previously this only covered connected/reconnecting/switching_protocol → disconnected,
+    // which missed the case where the tunnel fails BEFORE ever reaching 'connected' (i.e.
+    // prev='connecting' → curr='disconnected'). That left a reserved connection slot
+    // orphaned on the server; a few failed taps in a row would exhaust the per-user
+    // device limit and the retry button would start showing "device limit reached"
+    // errors even though no real devices were active.
+    //
+    // Including 'connecting' in the prev set means every failed first-time connect
+    // also releases its slot, so the server-side count stays honest.
     if (
       (prevState === 'connected' ||
+        prevState === 'connecting' ||
         prevState === 'reconnecting' ||
         prevState === 'switching_protocol') &&
       connectionState === 'disconnected'
@@ -418,6 +442,26 @@ export function useVpnConnection() {
 
     isManualDisconnectRef.current = false;
 
+    // Defensive: release any lingering connection slot from a
+    // previous failed attempt before reserving a new one. In normal
+    // operation the state watcher handles this, but the watcher
+    // relies on seeing a state transition — if the previous tunnel
+    // attempt left the state stuck in 'error' and the slot wasn't
+    // cleaned up, a fresh connect() call would pile a second slot
+    // on top of the first and hit the device-limit cap on the next
+    // reserveConnection call.
+    const lingeringId = useVpnStore.getState().connectionId;
+    if (lingeringId) {
+      try {
+        await api.delete(`/connections/${lingeringId}`);
+      } catch {
+        // Best effort — the scheduler will eventually clean stale
+        // rows if this fails, and the next reserveConnection will
+        // surface any real error to the user.
+      }
+      setConnectionId(null);
+    }
+
     try {
       // 1. Fetch server config
       const {data} = await api.get<{data: ServerConfig}>(
@@ -468,6 +512,17 @@ export function useVpnConnection() {
       }
     } catch (err) {
       console.error('Failed to connect:', err);
+      // Release any slot we managed to reserve before the failure
+      // so the next tap doesn't pile another one on top. The state
+      // watcher also runs on error transition but belt-and-suspenders
+      // here covers synchronous throws before the state transitions.
+      const stuckId = useVpnStore.getState().connectionId;
+      if (stuckId) {
+        try {
+          await api.delete(`/connections/${stuckId}`);
+        } catch {}
+        setConnectionId(null);
+      }
       useVpnStore.setState({
         connectionState: 'error',
         error: err instanceof Error ? err.message : 'Connection failed',

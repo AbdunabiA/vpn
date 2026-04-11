@@ -52,11 +52,36 @@ export const useVpnStore = create<VpnState>((set, get) => ({
   _connecting: false,
 
   connect: async (server: Server, config: ServerConfig) => {
-    const {connectionState, _connecting} = get();
+    let {connectionState, _connecting} = get();
+
     // Block if already connecting, connected, or a connect call is in flight
     if (_connecting || connectionState === 'connected' || connectionState === 'connecting') {
       console.log('[VPN Store] connect blocked: _connecting=', _connecting, 'state=', connectionState);
       return;
+    }
+
+    // If the previous disconnect is still in flight on the native side,
+    // wait for it to finish before starting a new connect. Otherwise the
+    // fresh connect() races the still-pending native disconnect and the
+    // native side typically loses the race — leaving the user with a
+    // failed first tap and a "works on second tap" experience. Poll
+    // every 100ms up to a 3s cap; the store's own disconnect safety
+    // timeout is 5s so we always finish inside that window.
+    if (connectionState === 'disconnecting') {
+      console.log('[VPN Store] connect waiting for disconnecting to finish');
+      const waitStart = Date.now();
+      while (
+        get().connectionState === 'disconnecting' &&
+        Date.now() - waitStart < 3000
+      ) {
+        await new Promise<void>(resolve => setTimeout(() => resolve(), 100));
+      }
+      connectionState = get().connectionState;
+      // If we're still stuck in disconnecting after the wait, force it.
+      if (connectionState === 'disconnecting') {
+        console.warn('[VPN Store] disconnecting state stuck — forcing disconnected');
+        set({connectionState: 'disconnected'});
+      }
     }
 
     // Clear any stale disconnect timeout from a previous disconnect
